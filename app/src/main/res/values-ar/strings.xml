@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="welcome_greeting">تحب نشتغل على إيه النهارده؟</string>
+    <string name="welcome_subtitle">مساحات عمل معزولة مربوطة بـ Termux Ubuntu على جهازك</string>
+    <string name="input_placeholder">اكتب لـ Aether…</string>
+    <string name="projects_title">المشاريع</string>
+    <string name="new_project">مشروع جديد</string>
+    <string name="new_chat">محادثة جديدة</string>
+    <string name="settings_title">الإعدادات</string>
+    <string name="setup_title">تهيئة البيئة</string>
+    <string name="export_zip">تحميل ZIP</string>
+    <string name="project_rules">قواعد وذاكرة المشروع (GEMINI.md)</string>
+    <string name="attach_file">رفع ملف للمشروع</string>
+    <string name="connected">متصل</string>
+    <string name="offline">غير متصل</string>
+</resources>
