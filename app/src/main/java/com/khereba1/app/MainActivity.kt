@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            AetherTheme(themeMode = state.settings.themeMode) {
+            AetherTheme(themeMode = state.settings.themeMode, language = state.settings.language) {
                 Scaffold(
                     snackbarHost = { SnackbarHost(hostState = snackbarHost) }
                 ) { innerPadding ->

@@ -399,17 +399,13 @@ if __name__ == "__main__":
      */
     fun termuxStartBridgeCommand(port: Int): String {
         val b64 = bridgeBase64()
-        val innerUbuntu = """
+        val prepareUbuntu = """
 mkdir -p ~/aether ~/aether_workspaces
 if ! command -v python3 >/dev/null 2>&1; then
   apt-get update -y && apt-get install -y python3 curl ca-certificates
 fi
 echo '$b64' | base64 -d > ~/aether/aether_bridge.py
 chmod +x ~/aether/aether_bridge.py
-if ! pgrep -f 'aether_bridge.py' >/dev/null 2>&1; then
-  AETHER_PORT=$port nohup python3 ~/aether/aether_bridge.py > ~/aether/bridge.log 2>&1 &
-  sleep 1
-fi
 """.trimIndent().replace("\"", "\\\"")
 
         return """
@@ -420,7 +416,11 @@ fi
 if [ ! -d "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
   proot-distro install ubuntu
 fi
-proot-distro login ubuntu -- bash -c "$innerUbuntu"
+proot-distro login ubuntu -- bash -c "$prepareUbuntu"
+if ! curl -fsS http://127.0.0.1:$port/health >/dev/null 2>&1; then
+  nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
+  sleep 2
+fi
 """.trimIndent()
     }
 

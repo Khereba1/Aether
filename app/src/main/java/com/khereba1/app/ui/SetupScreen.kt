@@ -40,12 +40,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.khereba1.app.AetherUiState
 import com.khereba1.app.data.BridgeScripts
@@ -67,6 +71,7 @@ fun SetupScreen(
     val health = setup.health
     val activeCliKey = state.settings.cliEngine.binary
     val cliReady = if (activeCliKey.isEmpty()) true else (health.clis[activeCliKey] == true)
+    val manualBridgeCmd = BridgeScripts.termuxStartBridgeCommand(state.settings.port)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -76,7 +81,7 @@ fun SetupScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .padding(horizontal = 18.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -122,7 +127,8 @@ fun SetupScreen(
             if (setup.statusNote.isNotBlank()) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(14.dp)
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         text = setup.statusNote,
@@ -161,7 +167,11 @@ fun SetupScreen(
                 stepNumber = "2",
                 title = "صلاحية الربط مع Termux",
                 ok = setup.permissionGranted && health.reachable,
-                subtitle = "تسمح لـ Aether يشغّل سيرفر Ubuntu تلقائياً أول ما تفتح التطبيق."
+                subtitle = if (setup.permissionGranted) {
+                    "الصلاحية ممنوحة. انسخ الأمر ده والصقه مرة واحدة في Termux عشان يسمح بالتشغيل التلقائي:"
+                } else {
+                    "تسمح لـ Aether يشغّل سيرفر Ubuntu تلقائياً أول ما تفتح التطبيق."
+                }
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!setup.permissionGranted) {
@@ -172,11 +182,6 @@ fun SetupScreen(
                             Text("منح صلاحية RUN_COMMAND")
                         }
                     }
-                    Text(
-                        text = "مرة واحدة فقط في Termux: الصق الأمر ده لتفعيل allow-external-apps=true (واسمح لـ Termux بالظهور فوق التطبيقات):",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     CommandBox(
                         command = BridgeScripts.ENABLE_EXTERNAL_APPS_CMD,
                         onCopy = {
@@ -196,27 +201,46 @@ fun SetupScreen(
                     val envLabel = if (health.ubuntuReady) "Ubuntu جاهز" else "Python جاهز"
                     "$envLabel · Python ${health.pythonVersion} · Port ${state.settings.port}"
                 } else {
-                    "السيرفر المحلي مش شغال حالياً. اضغط تشغيل تلقائي عشان Aether يجهّز Ubuntu ويشغّله."
+                    "اضغط تشغيل تلقائي، أو انسخ أمر التشغيل اليدوي والصقه في Termux مباشرة (مضمون 100%):"
                 }
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { onAutoStartBridge(true) },
                         enabled = setup.termuxInstalled && !setup.checking,
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("تجهيز وتشغيل تلقائي")
+                        Text("تجهيز وتشغيل تلقائي", maxLines = 1)
                     }
-                    OutlinedButton(
-                        onClick = { onAutoStartBridge(false) },
-                        enabled = setup.termuxInstalled && !setup.checking,
-                        shape = RoundedCornerShape(12.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("شاشة Termux")
+                        OutlinedButton(
+                            onClick = { onAutoStartBridge(false) },
+                            enabled = setup.termuxInstalled && !setup.checking,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("افتح Termux", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                copyToClipboard(context, manualBridgeCmd)
+                                onCopiedNotice("تم نسخ أمر التشغيل — الصقه في Termux ثم اضغط تحديث")
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("نسخ الأمر اليدوي", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
             }
@@ -224,23 +248,24 @@ fun SetupScreen(
             // Step 4: CLI Engine (Antigravity / Gemini / Claude)
             StepCard(
                 stepNumber = "4",
-                title = "أداة الذكاء الاصطناعي (${state.settings.cliEngine.label})",
+                title = "أداة الذكاء الاصطناعي (${state.settings.cliEngine.binary.ifBlank { "CLI" }})",
                 ok = health.reachable && cliReady,
                 subtitle = when {
                     !health.reachable -> "شغّل السيرفر في الخطوة 3 الأول عشان نفحص الـ CLI."
                     cliReady -> "أداة ${state.settings.cliEngine.binary} مثبتة وجاهزة جوه Ubuntu!"
-                    else -> "أداة ${state.settings.cliEngine.binary} لسه مش مثبتة جوه Ubuntu. اضغط الزرار لتثبيتها وتسجيل الدخول بحسابك."
+                    else -> "أداة ${state.settings.cliEngine.binary} لسه مش مثبتة جوه Ubuntu. اضغط الزرار أو انسخ الأمر لتثبيتها وتسجيل الدخول."
                 }
             ) {
                 if (health.reachable && !cliReady) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { onInstallCli(state.settings.cliEngine) },
+                            modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("تثبيت وتسجيل دخول ${state.settings.cliEngine.binary}")
+                            Text("تثبيت وتسجيل دخول ${state.settings.cliEngine.binary}", maxLines = 1)
                         }
                         CommandBox(
                             command = BridgeScripts.cliSetupCommand(state.settings.cliEngine),
@@ -253,7 +278,7 @@ fun SetupScreen(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
 
             Button(
                 onClick = onContinueToChat,
@@ -292,7 +317,7 @@ private fun StepCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         border = BorderStroke(
             1.dp,
-            if (ok) Color(0xFF2E7D32).copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline
+            if (ok) Color(0xFF2E7D32).copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline
         )
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -322,26 +347,29 @@ private fun StepCard(
 
 @Composable
 private fun CommandBox(command: String, onCopy: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = command,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2
-        )
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = onCopy) {
-            Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("نسخ")
+    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = command,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onCopy) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("نسخ")
+            }
         }
     }
 }
