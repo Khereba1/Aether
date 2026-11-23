@@ -405,7 +405,7 @@ fun ChatScreen(
                                 )
                             } else {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.rounded.Send,
+                                    imageVector = Icons.AutoMirrored.Rounded.Send,
                                     contentDescription = "Send",
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(18.dp)
