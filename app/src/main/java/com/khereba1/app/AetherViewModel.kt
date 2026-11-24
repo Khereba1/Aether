@@ -91,20 +91,25 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             var health = BridgeClient.checkHealth(port)
-            val needsUpgrade = health.reachable && health.bridgeVersion != BridgeScripts.BRIDGE_VERSION
-            if ((!health.reachable || needsUpgrade) && autoWake && termuxOk && permOk) {
-                val note = if (needsUpgrade) {
-                    "Updating Ubuntu bridge to v${BridgeScripts.BRIDGE_VERSION}..."
-                } else {
-                    "Starting Ubuntu bridge in Termux..."
-                }
-                _ui.update { it.copy(setup = it.setup.copy(statusNote = note)) }
-                val res = TermuxBridge.runCommand(ctx, BridgeScripts.termuxStartBridgeCommand(port), background = true)
-                if (res.isSuccess) {
-                    for (attempt in 0 until 7) {
-                        delay(1200)
+            if (!health.reachable && autoWake && termuxOk && permOk) {
+                _ui.update { it.copy(setup = it.setup.copy(statusNote = "Waking Ubuntu bridge in Termux...")) }
+                val fastRes = TermuxBridge.runCommand(ctx, BridgeScripts.termuxFastWakeCommand(port), background = true)
+                if (fastRes.isSuccess) {
+                    for (attempt in 0 until 5) {
+                        delay(1000)
                         health = BridgeClient.checkHealth(port)
-                        if (health.reachable && health.bridgeVersion == BridgeScripts.BRIDGE_VERSION) break
+                        if (health.reachable) break
+                    }
+                }
+                if (!health.reachable) {
+                    _ui.update { it.copy(setup = it.setup.copy(statusNote = "Installing bridge inside Ubuntu...")) }
+                    val fullRes = TermuxBridge.runCommand(ctx, BridgeScripts.termuxStartBridgeCommand(port), background = true)
+                    if (fullRes.isSuccess) {
+                        for (attempt in 0 until 6) {
+                            delay(1200)
+                            health = BridgeClient.checkHealth(port)
+                            if (health.reachable) break
+                        }
                     }
                 }
             }

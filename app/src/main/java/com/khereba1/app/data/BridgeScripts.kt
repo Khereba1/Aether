@@ -9,7 +9,7 @@ import android.util.Base64
 object BridgeScripts {
 
     const val DEFAULT_PORT = 8765
-    const val BRIDGE_VERSION = "1.2.1"
+    const val BRIDGE_VERSION = "1.2.2"
 
     const val ENABLE_EXTERNAL_APPS_CMD =
         "mkdir -p ~/.termux && grep -qxF 'allow-external-apps=true' ~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps=true' >> ~/.termux/termux.properties && termux-reload-settings"
@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-BRIDGE_VERSION = "1.2.1"
+BRIDGE_VERSION = "1.2.2"
 PORT = int(os.environ.get("AETHER_PORT", "8765"))
 WORKSPACES = Path.home() / "aether_workspaces"
 WORKSPACES.mkdir(parents=True, exist_ok=True)
@@ -603,10 +603,23 @@ if __name__ == "__main__":
         Base64.encodeToString(BRIDGE_PY.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
 
     /**
+     * Lightweight (~180-byte) Termux command to wake an already-installed Ubuntu bridge immediately.
+     * Uses setsid so Termux RUN_COMMAND exit never sends SIGTERM/SIGHUP to the bridge.
+     */
+    fun termuxFastWakeCommand(port: Int): String = """
+termux-wake-lock 2>/dev/null || true
+if command -v setsid >/dev/null 2>&1; then
+  setsid proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
+else
+  nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
+fi
+""".trimIndent()
+
+    /**
      * Full Termux bootstrap command:
-     * 1) Checks proot-distro + ubuntu (installs if absent)
+     * 1) Checks proot-distro + ubuntu (installs only if absent)
      * 2) Writes ~/aether/aether_bridge.py inside Ubuntu
-     * 3) Restarts the bridge on 127.0.0.1:<port>
+     * 3) Starts the bridge detached via setsid on 127.0.0.1:<port>
      */
     fun termuxStartBridgeCommand(port: Int): String {
         val b64 = bridgeBase64()
@@ -616,7 +629,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   apt-get update -y && apt-get install -y python3 curl ca-certificates
 fi
 if [ -f ~/aether/bridge.pid ]; then
-  kill "$(cat ~/aether/bridge.pid)" 2>/dev/null || true
+  kill \$(cat ~/aether/bridge.pid) 2>/dev/null || true
   rm -f ~/aether/bridge.pid
 fi
 echo '$b64' | base64 -d > ~/aether/aether_bridge.py
@@ -628,13 +641,15 @@ termux-wake-lock 2>/dev/null || true
 if ! command -v proot-distro >/dev/null 2>&1; then
   pkg update -y && pkg install -y proot-distro
 fi
-if [ ! -d "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
-  proot-distro install ubuntu
-fi
+proot-distro login ubuntu -- true 2>/dev/null || proot-distro install ubuntu
 proot-distro login ubuntu -- bash -c "$prepareUbuntu"
 pkill -f '[p]ython3 .*aether_bridge\.py' 2>/dev/null || true
-nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
-sleep 2
+if command -v setsid >/dev/null 2>&1; then
+  setsid proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
+else
+  nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
+fi
+sleep 1
 """.trimIndent()
     }
 
