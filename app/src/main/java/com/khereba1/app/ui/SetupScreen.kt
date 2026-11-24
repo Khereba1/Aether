@@ -161,7 +161,7 @@ fun SetupScreen(
             StepCard(
                 stepNumber = "2",
                 title = "Termux Bridge Permission",
-                ok = setup.permissionGranted && health.reachable,
+                ok = setup.permissionGranted,
                 subtitle = if (setup.permissionGranted) {
                     "Permission granted. Paste this once in Termux to allow background auto-start:"
                 } else {

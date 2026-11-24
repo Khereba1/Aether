@@ -9,7 +9,7 @@ import android.util.Base64
 object BridgeScripts {
 
     const val DEFAULT_PORT = 8765
-    const val BRIDGE_VERSION = "1.2.0"
+    const val BRIDGE_VERSION = "1.2.1"
 
     const val ENABLE_EXTERNAL_APPS_CMD =
         "mkdir -p ~/.termux && grep -qxF 'allow-external-apps=true' ~/.termux/termux.properties 2>/dev/null || echo 'allow-external-apps=true' >> ~/.termux/termux.properties && termux-reload-settings"
@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-BRIDGE_VERSION = "1.2.0"
+BRIDGE_VERSION = "1.2.1"
 PORT = int(os.environ.get("AETHER_PORT", "8765"))
 WORKSPACES = Path.home() / "aether_workspaces"
 WORKSPACES.mkdir(parents=True, exist_ok=True)
@@ -591,6 +591,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    pid_file = Path.home() / "aether" / "bridge.pid"
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()), encoding="utf-8")
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"Aether bridge v{BRIDGE_VERSION} listening on http://127.0.0.1:{PORT}", flush=True)
     server.serve_forever()
@@ -612,6 +615,10 @@ mkdir -p ~/aether ~/aether_workspaces
 if ! command -v python3 >/dev/null 2>&1; then
   apt-get update -y && apt-get install -y python3 curl ca-certificates
 fi
+if [ -f ~/aether/bridge.pid ]; then
+  kill "$(cat ~/aether/bridge.pid)" 2>/dev/null || true
+  rm -f ~/aether/bridge.pid
+fi
 echo '$b64' | base64 -d > ~/aether/aether_bridge.py
 chmod +x ~/aether/aether_bridge.py
 """.trimIndent().replace("\"", "\\\"")
@@ -625,7 +632,7 @@ if [ ! -d "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
   proot-distro install ubuntu
 fi
 proot-distro login ubuntu -- bash -c "$prepareUbuntu"
-pkill -f aether_bridge.py 2>/dev/null || true
+pkill -f '[p]ython3 .*aether_bridge\.py' 2>/dev/null || true
 nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
 sleep 2
 """.trimIndent()

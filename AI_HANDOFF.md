@@ -4,7 +4,7 @@
 - **App name:** Aether
 - **Source package (`namespace`):** `com.khereba1.app` (fixed per STANDARD.md)
 - **Installed `applicationId`:** `com.khereba1.aether`
-- **Current version:** `1.2.0` (`versionCode = 5`)
+- **Current version:** `1.2.1` (`versionCode = 6`)
 - **GitHub repo:** `Khereba1/Aether`
 - **Build pipeline:** GitHub Actions (`.github/workflows/build.yml`, JDK 17, Gradle 8.10.2, AGP 8.7.3, Kotlin 2.0.21, Compose BOM `2024.10.01`).
 
@@ -32,3 +32,4 @@
 - `1.0.2` (3): Fixed outer Termux `nohup proot-distro` bridge daemon launch + manual command copy.
 - `1.1.0` (4): Unified font, English LTR UI, Markdown renderer, single-file `/file` download, permanent `agy` `stream-json` parser.
 - `1.2.0` (5): Live in-app Model & Effort picker (`GET /models`), persistent multi-turn `--conversation` context + New Session reset, Stop generation button, direct Open + Share for single files, delete project confirmation, unified 15-slot typography, fixed double Scaffold insets, automatic bridge self-upgrade.
+- `1.2.1` (6): Fixed `pkill -f aether_bridge.py` self-terminating the Termux bootstrap script; switched to PID file + bracketed regex; fixed Setup Step 2 permission indicator.
