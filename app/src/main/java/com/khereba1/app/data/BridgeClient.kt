@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Base64
+import android.webkit.MimeTypeMap
 import com.khereba1.app.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -15,6 +16,17 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+
+data class DownloadedArtifact(
+    val file: File,
+    val mimeType: String,
+    val openDirectly: Boolean = false
+)
+
+data class ModelsResponse(
+    val models: List<ModelOption>,
+    val currentModel: String
+)
 
 object BridgeClient {
 
@@ -46,11 +58,33 @@ object BridgeClient {
                 reachable = json.optBoolean("ok", false),
                 ubuntuReady = json.optBoolean("ubuntu", false),
                 pythonVersion = json.optString("python", ""),
+                bridgeVersion = json.optString("bridge_version", ""),
                 clis = clis,
                 workspacesDir = json.optString("workspaces_dir", "")
             )
         } catch (e: Exception) {
             BridgeHealth(reachable = false)
+        }
+    }
+
+    suspend fun listModels(port: Int): ModelsResponse = withContext(Dispatchers.IO) {
+        try {
+            val text = requestJson(port, "GET", "/models", null)
+            val json = JSONObject(text)
+            val arr = json.optJSONArray("models")
+            val out = mutableListOf<ModelOption>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val id = o.optString("id")
+                    val label = o.optString("label", id)
+                    if (id.isNotBlank()) out.add(ModelOption(id = id, label = label))
+                }
+            }
+            ModelsResponse(out, json.optString("current", ""))
+        } catch (e: Exception) {
+            AppLog.log("MODELS", "Failed to fetch models: ${e.message}")
+            ModelsResponse(emptyList(), "")
         }
     }
 
@@ -66,6 +100,7 @@ object BridgeClient {
                     name = o.optString("name"),
                     fileCount = o.optInt("file_count", 0),
                     hasRules = o.optBoolean("has_rules", false),
+                    hasSession = o.optBoolean("has_session", false),
                     updatedAt = o.optLong("updated_at", 0L)
                 )
             )
@@ -81,6 +116,7 @@ object BridgeClient {
             name = o.optString("name", name),
             fileCount = o.optInt("file_count", 0),
             hasRules = o.optBoolean("has_rules", false),
+            hasSession = o.optBoolean("has_session", false),
             updatedAt = o.optLong("updated_at", System.currentTimeMillis())
         )
     }
@@ -88,6 +124,25 @@ object BridgeClient {
     suspend fun deleteProject(port: Int, slug: String): Boolean = withContext(Dispatchers.IO) {
         val text = requestJson(port, "DELETE", "/projects/${enc(slug)}", null)
         JSONObject(text).optBoolean("ok", false)
+    }
+
+    suspend fun resetSession(port: Int, slug: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val text = requestJson(port, "POST", "/projects/${enc(slug)}/reset", JSONObject())
+            JSONObject(text).optBoolean("ok", false)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    suspend fun cancelChat(port: Int, slug: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().put("project", slug)
+            val text = requestJson(port, "POST", "/chat/cancel", payload)
+            JSONObject(text).optBoolean("ok", false)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     suspend fun getRules(port: Int, slug: String): String = withContext(Dispatchers.IO) {
@@ -127,8 +182,14 @@ object BridgeClient {
             JSONObject(text).optBoolean("ok", false)
         }
 
-    suspend fun downloadProjectZip(context: Context, port: Int, slug: String): File = withContext(Dispatchers.IO) {
-        val conn = (URL("${baseUrl(port)}/projects/${enc(slug)}/zip").openConnection() as HttpURLConnection).apply {
+    suspend fun downloadSingleFile(
+        context: Context,
+        port: Int,
+        slug: String,
+        relPath: String,
+        openDirectly: Boolean = true
+    ): DownloadedArtifact = withContext(Dispatchers.IO) {
+        val conn = (URL("${baseUrl(port)}/projects/${enc(slug)}/file?path=${enc(relPath)}").openConnection() as HttpURLConnection).apply {
             connectTimeout = 5000
             readTimeout = 60000
             requestMethod = "GET"
@@ -137,21 +198,54 @@ object BridgeClient {
         if (code !in 200..299) {
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
             conn.disconnect()
-            throw RuntimeException("ZIP download failed: $err")
+            throw RuntimeException("File download failed: $err")
         }
         val bytes = conn.inputStream.use { it.readBytes() }
+        val serverMime = conn.contentType?.substringBefore(";")?.trim()
         conn.disconnect()
 
-        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
-        val zipName = "${slug}.zip"
-        val cacheFile = File(exportDir, zipName)
-        cacheFile.writeBytes(bytes)
+        val fileName = File(relPath).name.ifBlank { "file.bin" }
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        val mime = serverMime?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+            ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+            ?: "application/octet-stream"
 
-        // Also save a copy to public Downloads/Aether via MediaStore (minSdk 29 supports RELATIVE_PATH)
+        val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val cacheFile = File(exportDir, fileName)
+        cacheFile.writeBytes(bytes)
+        saveToDownloads(context, fileName, mime, bytes)
+        DownloadedArtifact(cacheFile, mime, openDirectly = openDirectly)
+    }
+
+    suspend fun downloadProjectZip(context: Context, port: Int, slug: String): DownloadedArtifact =
+        withContext(Dispatchers.IO) {
+            val conn = (URL("${baseUrl(port)}/projects/${enc(slug)}/zip").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 5000
+                readTimeout = 60000
+                requestMethod = "GET"
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "HTTP $code"
+                conn.disconnect()
+                throw RuntimeException("ZIP download failed: $err")
+            }
+            val bytes = conn.inputStream.use { it.readBytes() }
+            conn.disconnect()
+
+            val exportDir = File(context.cacheDir, "exports").apply { mkdirs() }
+            val zipName = "${slug}.zip"
+            val cacheFile = File(exportDir, zipName)
+            cacheFile.writeBytes(bytes)
+            saveToDownloads(context, zipName, "application/zip", bytes)
+            DownloadedArtifact(cacheFile, "application/zip", openDirectly = false)
+        }
+
+    private fun saveToDownloads(context: Context, fileName: String, mime: String, bytes: ByteArray) {
         try {
             val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, zipName)
-                put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
                 put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Aether")
             }
             val uri = context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
@@ -161,7 +255,6 @@ object BridgeClient {
         } catch (e: Exception) {
             AppLog.log("EXPORT", "MediaStore copy skipped: ${e.message}")
         }
-        cacheFile
     }
 
     suspend fun streamChat(
@@ -171,7 +264,7 @@ object BridgeClient {
         settings: AppSettings,
         onDelta: (String) -> Unit,
         onTool: (String) -> Unit,
-        onDone: (List<String>) -> Unit,
+        onDone: (List<String>, Boolean) -> Unit,
         onError: (String) -> Unit
     ) = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
@@ -182,6 +275,8 @@ object BridgeClient {
                 .put("engine", settings.cliEngine.id)
                 .put("custom_bin", settings.customBinary)
                 .put("model", settings.modelOverride)
+                .put("effort", settings.effort)
+                .put("continue_session", true)
 
             conn = (URL("${baseUrl(port)}/chat").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5000
@@ -223,7 +318,7 @@ object BridgeClient {
                                 if (arr != null) {
                                     for (i in 0 until arr.length()) changed.add(arr.optString(i))
                                 }
-                                onDone(changed)
+                                onDone(changed, ev.optBoolean("has_session", false))
                             }
                         }
                     } catch (e: Exception) {
@@ -231,7 +326,7 @@ object BridgeClient {
                     }
                 }
             }
-            if (!finished) onDone(emptyList())
+            if (!finished) onDone(emptyList(), false)
         } catch (e: Exception) {
             AppLog.log("CHAT", "Stream failed", e)
             onError(e.message ?: "Connection lost")

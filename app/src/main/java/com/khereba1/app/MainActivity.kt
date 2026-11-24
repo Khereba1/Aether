@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -22,12 +23,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.FileProvider
+import com.khereba1.app.data.DownloadedArtifact
 import com.khereba1.app.data.TermuxBridge
 import com.khereba1.app.ui.AetherTheme
 import com.khereba1.app.ui.ChatScreen
 import com.khereba1.app.ui.SettingsScreen
 import com.khereba1.app.ui.SetupScreen
-import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -65,16 +66,17 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(state.lastExportedZip) {
-                val zipFile = state.lastExportedZip
-                if (zipFile != null && zipFile.exists()) {
-                    shareZipFile(zipFile)
-                    vm.clearLastExportedZip()
+            LaunchedEffect(state.lastExportedArtifact) {
+                val artifact = state.lastExportedArtifact
+                if (artifact != null && artifact.file.exists()) {
+                    openOrShareArtifact(artifact)
+                    vm.clearLastExportedArtifact()
                 }
             }
 
             AetherTheme(themeMode = state.settings.themeMode) {
                 Scaffold(
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                     snackbarHost = { SnackbarHost(hostState = snackbarHost) }
                 ) { innerPadding ->
                     Box(
@@ -98,6 +100,7 @@ class MainActivity : ComponentActivity() {
                             AppScreen.CHAT -> ChatScreen(
                                 state = state,
                                 onSendPrompt = { vm.sendPrompt(it) },
+                                onStopStreaming = { vm.stopStreaming() },
                                 onSelectProject = { vm.selectProject(it) },
                                 onCreateProject = { n, t, r -> vm.createProject(n, t, r) },
                                 onDeleteProject = { vm.deleteProject(it) },
@@ -106,7 +109,10 @@ class MainActivity : ComponentActivity() {
                                 onSaveRules = { vm.saveActiveRules(it) },
                                 onLoadFiles = { vm.loadActiveFiles() },
                                 onPickUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) },
+                                onExportSingleFile = { path, openDirectly -> vm.exportSingleFile(path, openDirectly) },
                                 onExportZip = { vm.exportActiveProjectZip() },
+                                onRefreshModels = { vm.loadModels() },
+                                onSelectModelAndEffort = { m, e -> vm.selectModelAndEffort(m, e) },
                                 onOpenSettings = { vm.navigateTo(AppScreen.SETTINGS) },
                                 onOpenSetup = { vm.navigateTo(AppScreen.SETUP) },
                                 onRefreshConnection = { vm.refreshEnvironment(autoWake = true) },
@@ -116,10 +122,7 @@ class MainActivity : ComponentActivity() {
                             AppScreen.SETTINGS -> SettingsScreen(
                                 settings = state.settings,
                                 onBack = { vm.navigateTo(AppScreen.CHAT) },
-                                onSave = { updated, langChanged ->
-                                    vm.updateSettings(updated)
-                                    if (langChanged) recreate()
-                                },
+                                onSave = { updated -> vm.updateSettings(updated) },
                                 onOpenSetup = { vm.navigateTo(AppScreen.SETUP) },
                                 onNotice = { vm.showNotice(it) }
                             )
@@ -145,21 +148,33 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             AppLog.log("PICKER", "Failed to read picked file", e)
-            vm.showNotice("تعذر قراءة الملف المختار")
+            vm.showNotice("Could not read selected file")
         }
     }
 
-    private fun shareZipFile(file: File) {
+    private fun openOrShareArtifact(artifact: DownloadedArtifact) {
         try {
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip"
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", artifact.file)
+            if (artifact.openDirectly) {
+                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, artifact.mimeType)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                try {
+                    startActivity(Intent.createChooser(viewIntent, "Open ${artifact.file.name}"))
+                    return
+                } catch (_: Exception) {
+                    // Fall back to Share sheet if no viewer supports this MIME type
+                }
+            }
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = artifact.mimeType
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(Intent.createChooser(intent, "مشاركة ${file.name}"))
+            startActivity(Intent.createChooser(shareIntent, "Share ${artifact.file.name}"))
         } catch (e: Exception) {
-            AppLog.log("SHARE", "Failed to open share sheet", e)
+            AppLog.log("SHARE", "Failed to open/share artifact", e)
         }
     }
 }

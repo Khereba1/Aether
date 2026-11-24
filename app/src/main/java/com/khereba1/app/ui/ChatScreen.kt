@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -22,21 +23,28 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderZip
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Menu
+import androidx.compose.material.icons.rounded.OpenInNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -76,19 +84,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khereba1.app.AetherUiState
 import com.khereba1.app.data.ChatMessage
+import com.khereba1.app.data.ModelOption
 import com.khereba1.app.data.ProjectInfo
 import com.khereba1.app.data.ProjectTemplate
+import com.khereba1.app.data.WorkspaceFile
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     state: AetherUiState,
     onSendPrompt: (String) -> Unit,
+    onStopStreaming: () -> Unit,
     onSelectProject: (ProjectInfo) -> Unit,
     onCreateProject: (String, ProjectTemplate, String) -> Unit,
     onDeleteProject: (ProjectInfo) -> Unit,
@@ -97,7 +110,10 @@ fun ChatScreen(
     onSaveRules: (String) -> Unit,
     onLoadFiles: () -> Unit,
     onPickUploadFile: () -> Unit,
+    onExportSingleFile: (String, Boolean) -> Unit,
     onExportZip: () -> Unit,
+    onRefreshModels: () -> Unit,
+    onSelectModelAndEffort: (String, String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSetup: () -> Unit,
     onRefreshConnection: () -> Unit,
@@ -112,11 +128,24 @@ fun ChatScreen(
     var showNewProjectDialog by remember { mutableStateOf(false) }
     var showRulesDialog by remember { mutableStateOf(false) }
     var showFilesDialog by remember { mutableStateOf(false) }
+    var showModelDialog by remember { mutableStateOf(false) }
+    var pendingDeleteProject by remember { mutableStateOf<ProjectInfo?>(null) }
 
     LaunchedEffect(state.messages.size, state.messages.lastOrNull()?.text?.length) {
         if (state.messages.isNotEmpty()) {
             listState.animateScrollToItem(state.messages.lastIndex)
         }
+    }
+
+    val activeModelLabel = remember(state.settings, state.availableModels, state.defaultCliModel) {
+        val chosen = state.settings.modelOverride
+        val base = when {
+            chosen.isNotBlank() -> state.availableModels.firstOrNull { it.id == chosen }?.label ?: chosen
+            state.defaultCliModel.isNotBlank() -> state.availableModels.firstOrNull { it.id == state.defaultCliModel }?.label ?: state.defaultCliModel
+            else -> state.settings.cliEngine.binary.ifBlank { "CLI" }
+        }
+        val effortSuffix = state.settings.effort.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
+        base + effortSuffix
     }
 
     ModalNavigationDrawer(
@@ -150,11 +179,11 @@ fun ChatScreen(
                     ) {
                         Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("مشروع معزول جديد")
+                        Text("New Project")
                     }
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "المشاريع (${state.projects.size})",
+                        text = "Projects (${state.projects.size})",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -174,14 +203,18 @@ fun ChatScreen(
                                     Column {
                                         Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(
-                                            text = "${project.fileCount} ملف" + if (project.hasRules) " · GEMINI.md" else "",
+                                            text = "${project.fileCount} files" +
+                                                (if (project.hasRules) " · GEMINI.md" else "") +
+                                                (if (project.hasSession) " · active" else ""),
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 },
                                 badge = {
-                                    IconButton(onClick = { onDeleteProject(project) }) {
+                                    IconButton(onClick = { pendingDeleteProject = project }) {
                                         Icon(
                                             Icons.Rounded.DeleteOutline,
                                             contentDescription = "Delete",
@@ -202,7 +235,7 @@ fun ChatScreen(
                         },
                         icon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
                         label = {
-                            Text(if (state.setup.health.reachable) "البيئة (متصل)" else "تهيئة البيئة (غير متصل)")
+                            Text(if (state.setup.health.reachable) "Environment (Connected)" else "Environment Setup")
                         }
                     )
                     NavigationDrawerItem(
@@ -212,7 +245,7 @@ fun ChatScreen(
                             onOpenSettings()
                         },
                         icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
-                        label = { Text("الإعدادات والسجل") }
+                        label = { Text("Settings & Logs") }
                     )
                 }
             }
@@ -238,7 +271,20 @@ fun ChatScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (state.setup.health.reachable) {
+                                            if (state.availableModels.isEmpty()) onRefreshModels()
+                                            showModelDialog = true
+                                        } else {
+                                            onRefreshConnection()
+                                        }
+                                    }
+                                    .padding(vertical = 1.dp)
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)
@@ -250,17 +296,20 @@ fun ChatScreen(
                                 )
                                 Spacer(Modifier.width(6.dp))
                                 Text(
-                                    text = if (state.setup.health.reachable) {
-                                        state.settings.cliEngine.binary.ifBlank { "CLI" }
-                                    } else {
-                                        "غير متصل — اضغط للتشغيل"
-                                    },
+                                    text = if (state.setup.health.reachable) activeModelLabel else "Offline — tap to reconnect",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.clickable {
-                                        if (!state.setup.health.reachable) onRefreshConnection()
-                                    }
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                if (state.setup.health.reachable) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                                        contentDescription = "Switch model",
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     },
@@ -276,10 +325,13 @@ fun ChatScreen(
                                 onLoadFiles()
                                 showFilesDialog = true
                             }) {
-                                Icon(Icons.Rounded.FolderZip, contentDescription = "Files and ZIP")
+                                Icon(Icons.Rounded.FolderZip, contentDescription = "Files")
                             }
-                            IconButton(onClick = onClearChat) {
-                                Icon(Icons.Rounded.Add, contentDescription = "New chat")
+                            IconButton(
+                                onClick = onClearChat,
+                                enabled = !state.isStreaming
+                            ) {
+                                Icon(Icons.Rounded.Add, contentDescription = "New session")
                             }
                         } else {
                             IconButton(onClick = onRefreshConnection) {
@@ -300,7 +352,7 @@ fun ChatScreen(
                     WelcomeEmptyState(
                         modifier = Modifier.weight(1f),
                         projectName = state.activeProject?.name,
-                        engineLabel = state.settings.cliEngine.label,
+                        modelLabel = activeModelLabel,
                         onQuickPrompt = { prompt -> onSendPrompt(prompt) }
                     )
                 } else {
@@ -310,7 +362,7 @@ fun ChatScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
                         items(state.messages, key = { it.id }) { msg ->
                             MessageItem(
@@ -318,8 +370,11 @@ fun ChatScreen(
                                 onCopy = {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                     cm?.setPrimaryClip(ClipData.newPlainText("aether_msg", msg.text))
-                                    onNotice("تم نسخ الرد")
+                                    onNotice("Copied to clipboard")
                                 },
+                                onCodeCopied = onNotice,
+                                onOpenSingleFile = { path -> onExportSingleFile(path, true) },
+                                onShareSingleFile = { path -> onExportSingleFile(path, false) },
                                 onExportZip = onExportZip
                             )
                         }
@@ -332,7 +387,7 @@ fun ChatScreen(
                                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = "شغال على أداة: ${state.activeToolStatus}",
+                                        text = "Running tool: ${state.activeToolStatus}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -370,9 +425,12 @@ fun ChatScreen(
                         TextField(
                             value = inputText,
                             onValueChange = { inputText = it },
-                            placeholder = { Text("اكتب لـ Aether…") },
+                            placeholder = { Text("Message Aether…") },
                             modifier = Modifier.weight(1f),
                             maxLines = 5,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                textDirection = TextDirection.Content
+                            ),
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent,
@@ -386,26 +444,33 @@ fun ChatScreen(
                                 .size(40.dp)
                                 .clip(CircleShape)
                                 .background(
-                                    if (inputText.isNotBlank() && !state.isStreaming)
-                                        MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.outline
+                                    when {
+                                        state.isStreaming -> MaterialTheme.colorScheme.primary
+                                        inputText.isNotBlank() -> MaterialTheme.colorScheme.primary
+                                        else -> MaterialTheme.colorScheme.outline
+                                    }
                                 )
-                                .clickable(enabled = inputText.isNotBlank() && !state.isStreaming) {
-                                    val toSend = inputText
-                                    inputText = ""
-                                    onSendPrompt(toSend)
+                                .clickable(enabled = state.isStreaming || inputText.isNotBlank()) {
+                                    if (state.isStreaming) {
+                                        onStopStreaming()
+                                    } else {
+                                        val toSend = inputText
+                                        inputText = ""
+                                        onSendPrompt(toSend)
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             if (state.isStreaming) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(18.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.onPrimary
+                                Icon(
+                                    imageVector = Icons.Rounded.Stop,
+                                    contentDescription = "Stop",
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(18.dp)
                                 )
                             } else {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.rounded.Send,
+                                    imageVector = Icons.AutoMirrored.Rounded.Send,
                                     contentDescription = "Send",
                                     tint = MaterialTheme.colorScheme.onPrimary,
                                     modifier = Modifier.size(18.dp)
@@ -416,6 +481,22 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    if (showModelDialog) {
+        ModelPickerDialog(
+            models = state.availableModels,
+            selectedModel = state.settings.modelOverride,
+            defaultCliModel = state.defaultCliModel,
+            selectedEffort = state.settings.effort,
+            loading = state.loadingModels,
+            onRefresh = onRefreshModels,
+            onDismiss = { showModelDialog = false },
+            onApply = { m, e ->
+                showModelDialog = false
+                onSelectModelAndEffort(m, e)
+            }
+        )
     }
 
     if (showNewProjectDialog) {
@@ -449,11 +530,193 @@ fun ChatScreen(
                 showFilesDialog = false
                 onPickUploadFile()
             },
+            onOpenFile = { fileName ->
+                showFilesDialog = false
+                onExportSingleFile(fileName, true)
+            },
+            onShareFile = { fileName ->
+                showFilesDialog = false
+                onExportSingleFile(fileName, false)
+            },
             onExportZip = {
                 showFilesDialog = false
                 onExportZip()
             }
         )
+    }
+
+    val toDelete = pendingDeleteProject
+    if (toDelete != null) {
+        AlertDialog(
+            onDismissRequest = { pendingDeleteProject = null },
+            title = { Text("Delete project?") },
+            text = {
+                Text("This permanently deletes \"${toDelete.name}\" and all files inside its workspace folder.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        pendingDeleteProject = null
+                        onDeleteProject(toDelete)
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteProject = null }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ModelPickerDialog(
+    models: List<ModelOption>,
+    selectedModel: String,
+    defaultCliModel: String,
+    selectedEffort: String,
+    loading: Boolean,
+    onRefresh: () -> Unit,
+    onDismiss: () -> Unit,
+    onApply: (String, String) -> Unit
+) {
+    var chosenModel by remember(selectedModel) { mutableStateOf(selectedModel) }
+    var chosenEffort by remember(selectedEffort) { mutableStateOf(selectedEffort) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Model & Effort")
+                IconButton(onClick = onRefresh, enabled = !loading) {
+                    if (loading) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.Refresh, contentDescription = "Refresh models", modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Model",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                val defaultSub = defaultCliModel.takeIf { it.isNotBlank() }?.let { "Default ($it)" } ?: "Default (agy)"
+                ModelRow(
+                    title = defaultSub,
+                    subtitle = "Uses your active agy setting",
+                    selected = chosenModel.isBlank(),
+                    onClick = { chosenModel = "" }
+                )
+
+                if (models.isEmpty() && !loading) {
+                    Text(
+                        text = "No models returned by agy. Tap Refresh or set a slug in Settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    models.forEach { m ->
+                        ModelRow(
+                            title = m.label,
+                            subtitle = m.id,
+                            selected = chosenModel == m.id,
+                            onClick = { chosenModel = m.id }
+                        )
+                    }
+                }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                Text(
+                    text = "Reasoning Effort",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("" to "Auto", "low" to "Low", "medium" to "Med", "high" to "High").forEach { (k, label) ->
+                        FilterChip(
+                            selected = chosenEffort == k,
+                            onClick = { chosenEffort = k },
+                            label = { Text(label, maxLines = 1) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onApply(chosenModel, chosenEffort) }) { Text("Apply") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun ModelRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(10.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (selected) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
     }
 }
 
@@ -461,7 +724,7 @@ fun ChatScreen(
 private fun WelcomeEmptyState(
     modifier: Modifier,
     projectName: String?,
-    engineLabel: String,
+    modelLabel: String,
     onQuickPrompt: (String) -> Unit
 ) {
     Column(
@@ -487,24 +750,26 @@ private fun WelcomeEmptyState(
         }
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "تحب نشتغل على إيه النهارده؟",
+            text = "What would you like to build?",
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = (projectName?.let { "مشروع: $it · " } ?: "") + engineLabel,
+            text = (projectName?.let { "$it · " } ?: "") + modelLabel,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
         Spacer(Modifier.height(22.dp))
         Column(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            QuickChip("استعرض الملفات الموجودة في المشروع ده ولخّصلي هيكلها") { onQuickPrompt(it) }
-            QuickChip("اعملي ملخص منظم حسب قواعد GEMINI.md للملفات المرفوعة") { onQuickPrompt(it) }
-            QuickChip("جهّزلي ملفات المشروع النهائية عشان أعملها تصدير ZIP") { onQuickPrompt(it) }
+            QuickChip("Inspect files in this workspace and summarize the structure") { onQuickPrompt(it) }
+            QuickChip("Summarize the uploaded notes following GEMINI.md rules") { onQuickPrompt(it) }
+            QuickChip("Build a clean single-file HTML tool and save it here") { onQuickPrompt(it) }
         }
     }
 }
@@ -532,6 +797,9 @@ private fun QuickChip(text: String, onClick: (String) -> Unit) {
 private fun MessageItem(
     message: ChatMessage,
     onCopy: () -> Unit,
+    onCodeCopied: (String) -> Unit,
+    onOpenSingleFile: (String) -> Unit,
+    onShareSingleFile: (String) -> Unit,
     onExportZip: () -> Unit
 ) {
     val isUser = message.role == "user"
@@ -545,7 +813,7 @@ private fun MessageItem(
                 Text(
                     text = message.text,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
@@ -596,13 +864,16 @@ private fun MessageItem(
                 }
             }
 
-            Text(
-                text = message.text.ifBlank { "…" },
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (message.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground
+            MarkdownText(
+                markdown = message.text.ifBlank { "…" },
+                textColor = if (message.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
+                onCodeCopied = onCodeCopied
             )
 
+            // Smart file card: 1 file -> Open + Share directly; multiple files -> ZIP
             if (message.changedFiles.isNotEmpty()) {
+                val singleFile = if (message.changedFiles.size == 1) message.changedFiles.first() else null
+                val singleName = singleFile?.let { File(it).name }
                 Card(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -615,27 +886,50 @@ private fun MessageItem(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Rounded.FolderZip,
+                            imageVector = if (singleFile != null) Icons.Rounded.OpenInNew else Icons.Rounded.FolderZip,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "تم تعديل/إنشاء ${message.changedFiles.size} ملف",
+                                text = singleName ?: "${message.changedFiles.size} files updated",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = message.changedFiles.take(3).joinToString("، "),
+                                text = if (singleFile != null) "Saved in workspace" else message.changedFiles.take(3).joinToString(", "),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Button(onClick = onExportZip, shape = RoundedCornerShape(10.dp)) {
-                            Text("تحميل ZIP")
+                        Spacer(Modifier.width(6.dp))
+                        if (singleFile != null) {
+                            IconButton(onClick = { onShareSingleFile(singleFile) }) {
+                                Icon(
+                                    Icons.Rounded.Share,
+                                    contentDescription = "Share",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            Button(
+                                onClick = { onOpenSingleFile(singleFile) },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Open", maxLines = 1)
+                            }
+                        } else {
+                            Button(
+                                onClick = onExportZip,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("ZIP", maxLines = 1)
+                            }
                         }
                     }
                 }
@@ -655,13 +949,13 @@ private fun NewProjectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("مشروع معزول جديد") },
+        title = { Text("New Isolated Project") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("اسم المشروع (مثلاً: ملخصات التمريض)") },
+                    label = { Text("Project name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -673,14 +967,14 @@ private fun NewProjectDialog(
                                 template = t
                                 rules = t.defaultRules
                             },
-                            label = { Text(t.labelAr) }
+                            label = { Text(t.labelEn, maxLines = 1) }
                         )
                     }
                 }
                 OutlinedTextField(
                     value = rules,
                     onValueChange = { rules = it },
-                    label = { Text("قواعد المشروع (GEMINI.md)") },
+                    label = { Text("Project rules (GEMINI.md)") },
                     minLines = 4,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth()
@@ -689,13 +983,13 @@ private fun NewProjectDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(name.ifBlank { "مشروع جديد" }, template, rules) }
+                onClick = { onCreate(name.ifBlank { "New Project" }, template, rules) }
             ) {
-                Text("إنشاء")
+                Text("Create")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("إلغاء") }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -710,7 +1004,7 @@ private fun RulesEditorDialog(
     var text by remember(initialRules) { mutableStateOf(initialRules) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("قواعد وذاكرة: $projectName") },
+        title = { Text("Rules & Memory: $projectName") },
         text = {
             OutlinedTextField(
                 value = text,
@@ -722,10 +1016,10 @@ private fun RulesEditorDialog(
             )
         },
         confirmButton = {
-            Button(onClick = { onSave(text) }) { Text("حفظ") }
+            Button(onClick = { onSave(text) }) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("إغلاق") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 }
@@ -733,34 +1027,69 @@ private fun RulesEditorDialog(
 @Composable
 private fun ProjectFilesDialog(
     projectName: String,
-    files: List<com.khereba1.app.data.WorkspaceFile>,
+    files: List<WorkspaceFile>,
     onDismiss: () -> Unit,
     onUpload: () -> Unit,
+    onOpenFile: (String) -> Unit,
+    onShareFile: (String) -> Unit,
     onExportZip: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ملفات مشروع: $projectName") },
+        title = { Text("Files: $projectName") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 360.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 if (files.isEmpty()) {
-                    Text("الفولدر فاضي حالياً.", style = MaterialTheme.typography.bodyMedium)
+                    Text("This workspace folder is empty.", style = MaterialTheme.typography.bodyMedium)
                 } else {
-                    files.take(15).forEach { f ->
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(
-                                text = (if (f.isDir) "📁 " else "📄 ") + f.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (!f.isDir) {
+                    Text(
+                        text = "Tap a file to open it, or tap Share:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    files.take(25).forEach { f ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = !f.isDir) { onOpenFile(f.name) }
+                                .padding(vertical = 4.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "${(f.sizeBytes / 1024).coerceAtLeast(1)} KB",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = (if (f.isDir) "📁 " else "📄 ") + f.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                if (!f.isDir) {
+                                    Text(
+                                        text = "${(f.sizeBytes / 1024).coerceAtLeast(1)} KB",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (!f.isDir) {
+                                IconButton(
+                                    onClick = { onShareFile(f.name) },
+                                    modifier = Modifier.size(32.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Rounded.Share,
+                                        contentDescription = "Share",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
@@ -768,16 +1097,16 @@ private fun ProjectFilesDialog(
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onUpload, modifier = Modifier.weight(1f)) {
-                        Text("رفع ملف")
+                        Text("Upload")
                     }
                     Button(onClick = onExportZip, modifier = Modifier.weight(1f)) {
-                        Text("تحميل ZIP")
+                        Text("Export ZIP")
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("تم") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 }

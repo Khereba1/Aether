@@ -16,8 +16,9 @@ object LocalStore {
             cliEngine = CliEngine.fromId(sp.getString("cli_engine", CliEngine.ANTIGRAVITY.id)),
             customBinary = sp.getString("custom_bin", "") ?: "",
             modelOverride = sp.getString("model_override", "") ?: "",
+            effort = sp.getString("effort", "") ?: "",
             themeMode = sp.getString("theme_mode", "system") ?: "system",
-            language = sp.getString("lang", "system") ?: "system"
+            language = "en"
         )
     }
 
@@ -27,8 +28,9 @@ object LocalStore {
             .putString("cli_engine", settings.cliEngine.id)
             .putString("custom_bin", settings.customBinary)
             .putString("model_override", settings.modelOverride)
+            .putString("effort", settings.effort)
             .putString("theme_mode", settings.themeMode)
-            .putString("lang", settings.language)
+            .putString("lang", "en")
             .apply()
     }
 

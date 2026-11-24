@@ -6,10 +6,12 @@ import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -18,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -57,6 +60,7 @@ fun MarkdownText(
     val codeBg = MaterialTheme.colorScheme.surfaceVariant
     val primary = MaterialTheme.colorScheme.primary
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    val dividerColor = MaterialTheme.colorScheme.outlineVariant
 
     SelectionContainer {
         Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -113,8 +117,45 @@ fun MarkdownText(
                     is MdBlock.TextBlock -> {
                         block.lines.forEach { rawLine ->
                             val line = rawLine.trimEnd()
-                            if (line.isBlank()) return@forEach
-                            val headingMatch = Regex("^(#{1,4})\\s+(.*)$").find(line)
+                            val trimmed = line.trim()
+                            if (trimmed.isBlank()) return@forEach
+
+                            if (trimmed == "---" || trimmed == "***" || trimmed == "___") {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                    color = dividerColor
+                                )
+                                return@forEach
+                            }
+
+                            if (trimmed.startsWith("> ")) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(codeBg.copy(alpha = 0.5f))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .width(3.dp)
+                                            .height(18.dp)
+                                            .background(primary, RoundedCornerShape(2.dp))
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = parseInline(trimmed.removePrefix("> "), primary, codeBg),
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            textDirection = TextDirection.Content
+                                        ),
+                                        color = muted,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                return@forEach
+                            }
+
+                            val headingMatch = Regex("^(#{1,4})\\s+(.*)$").find(trimmed)
                             if (headingMatch != null) {
                                 val level = headingMatch.groupValues[1].length
                                 val content = headingMatch.groupValues[2]
@@ -129,8 +170,8 @@ fun MarkdownText(
                                 )
                             } else {
                                 val display = when {
-                                    line.startsWith("- ") -> "•  " + line.removePrefix("- ")
-                                    line.startsWith("* ") -> "•  " + line.removePrefix("* ")
+                                    trimmed.startsWith("- ") -> "•  " + trimmed.removePrefix("- ")
+                                    trimmed.startsWith("* ") -> "•  " + trimmed.removePrefix("* ")
                                     else -> line
                                 }
                                 Text(

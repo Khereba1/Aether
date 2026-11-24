@@ -1,48 +1,34 @@
-# Aether: handoff notes for an AI assistant
+# Aether — AI Handoff
 
-Paste this file together with the project zip when asking an AI to change the app.
-The family-wide rules are in STANDARD.md (ask the owner to attach it if missing).
+## App Identity
+- **App name:** Aether
+- **Source package (`namespace`):** `com.khereba1.app` (fixed per STANDARD.md)
+- **Installed `applicationId`:** `com.khereba1.aether`
+- **Current version:** `1.2.0` (`versionCode = 5`)
+- **GitHub repo:** `Khereba1/Aether`
+- **Build pipeline:** GitHub Actions (`.github/workflows/build.yml`, JDK 17, Gradle 8.10.2, AGP 8.7.3, Kotlin 2.0.21, Compose BOM `2024.10.01`).
 
-## What this is
-Aether is a native Android personal AI agent workspace app (Claude-inspired warm editorial UI) that connects over loopback (127.0.0.1) to an embedded zero-dependency Python 3 bridge inside Termux Ubuntu, driving Antigravity CLI (`agy`, Google AI Pro), Gemini CLI (`gemini`), or Claude Code (`claude`) inside isolated per-project folders (`~/aether_workspaces/<slug>`) with per-project `GEMINI.md` rules, file uploads, and one-tap ZIP export.
-Android app, Kotlin + Jetpack Compose Material3. Source package `com.khereba1.app`, applicationId `com.khereba1.aether`.
-minSdk 29, compileSdk 35. UI languages: Arabic + English. Developer name: Khereba1.
-Permissions: `INTERNET` (loopback `127.0.0.1` cleartext only via `network_security_config.xml`) and `com.termux.permission.RUN_COMMAND` (auto-waking/bootstrapping Termux Ubuntu bridge).
+## Architecture
+- **UI (Jetpack Compose M3):** Warm Claude-inspired editorial theme (`ui/Theme.kt`) with unified `Noto Sans Arabic` typography across all 15 Material 3 text slots, English LTR chrome, and automatic `TextDirection.Content` bidi for Arabic/English chat.
+- **Markdown Renderer (`ui/MarkdownText.kt`):** Renders fenced code blocks with Copy button, headings, bullets, blockquotes, horizontal dividers, `**bold**`, `*italic*`, `` `inline code` ``, and `[label](url)` links without raw symbols.
+- **Local Ubuntu Bridge (`data/BridgeScripts.kt` v1.2.0):** Embedded zero-dependency Python 3 server running on `127.0.0.1:8765` inside Termux `proot-distro` Ubuntu. Auto-upgrades on app launch when bridge version changes.
+  - `GET /health` — reports Ubuntu, Python, `bridge_version`, installed CLIs (`agy`, `gemini`, `claude`), workspace path.
+  - `GET /models` — runs `agy models` dynamically to list available models for the signed-in account.
+  - `GET/POST/DELETE /projects` — isolated per-project workspaces under `~/aether_workspaces/<slug>`.
+  - `GET/POST /projects/<slug>/rules` — reads/writes per-project `GEMINI.md`.
+  - `POST /projects/<slug>/reset` — clears saved `conversation_id` for fresh context.
+  - `GET /projects/<slug>/files`, `GET /projects/<slug>/file?path=...`, `GET /projects/<slug>/zip`, `POST /projects/<slug>/upload`.
+  - `POST /chat` — streams NDJSON from `agy -p ... --output-format stream-json` with persistent `--conversation <id>`, `--model <slug>`, and `--effort <low|medium|high>`, plus automatic stale-session fallback.
+  - `POST /chat/cancel` — terminates the active CLI subprocess for a project.
+- **Chat UX (`ui/ChatScreen.kt`):**
+  - Tappable **Model & Effort** pill in the TopAppBar for instant switching without leaving Aether.
+  - **Stop** button in composer to abort active generation.
+  - **Smart File Cards**: single changed file shows **Open** + **Share**; multiple files show **ZIP**.
+  - Confirmation dialog before deleting a project.
 
-## How it is built (IMPORTANT)
-The owner has only a phone. There is NO local build. Code is pushed from Termux to GitHub and GitHub Actions
-(.github/workflows/build.yml) builds the APK with Gradle 8.10.2 (AGP 8.7.3, Kotlin 2.0.21, Compose BOM 2024.10.01).
-You cannot compile: be careful and conservative. A mistake shows up only as a failed Actions run.
-- Avoid Kotlin JVM signature clashes (`var x` with `private set` plus `fun setX(...)` breaks the build).
-- Every new string needs an entry in every language file the app has (values/strings.xml, and values-ar/strings.xml).
-- Do not bump library versions without checking that the exact version exists.
-
-## Files (app/src/main/java/com/khereba1/app)
-- `App.kt` — Application entry, `AppLog` crash/error logger, `LocaleHelper`
-- `MainActivity.kt` — Activity wiring `RUN_COMMAND` permission, file picker, ZIP `FileProvider` share, and Compose screens
-- `AetherViewModel.kt` — App state, Termux auto-wake/bootstrap, projects CRUD, `GEMINI.md` rules, streaming chat, ZIP export
-- `data/Models.kt` — Data classes (`CliEngine`, `ProjectTemplate`, `ProjectInfo`, `ChatMessage`, `BridgeHealth`, `SetupStatus`, `AppSettings`)
-- `data/BridgeScripts.kt` — Embedded zero-dependency Python 3 loopback server (`aether_bridge.py`) and Termux/Ubuntu bootstrap commands
-- `data/TermuxBridge.kt` — Termux installation check, `RUN_COMMAND` permission check, background/interactive command launcher
-- `data/BridgeClient.kt` — Loopback HTTP/NDJSON client (stdlib `HttpURLConnection`, no external network libs) + MediaStore ZIP export
-- `data/LocalStore.kt` — SharedPreferences settings and per-project JSON chat history persistence
-- `ui/Theme.kt` — Claude-inspired warm alabaster / warm charcoal Material 3 theme + Serif/Sans typography
-- `ui/SetupScreen.kt` — Step-by-step interactive onboarding wizard checking Termux, permissions, Ubuntu bridge, and CLI
-- `ui/ChatScreen.kt` — Claude-like chat UI, isolated projects sidebar, `GEMINI.md` rules editor, files viewer & ZIP export
-- `ui/SettingsScreen.kt` — Multi-CLI switcher, model override, port, theme/language settings, and `AppLog` viewer
-
-## REQUIRED answer format (the owner has only a phone + Termux)
-1. Briefly say what you changed and why (plain language; the owner writes Egyptian Arabic mixed with English terms, reply in the same).
-2. Deliver ONE zip containing only the changed/new files, complete (never snippets or diffs), with paths relative to the project root.
-   Name it `fixN.zip` (fix1, fix2, ...). If you cannot create a zip, give each file in full in its own code block with its path, and say so.
-3. Raise `versionCode` (+1) and `versionName` in `app/build.gradle.kts` for every functional change, and include that file.
-4. Give the install command, ready to copy, with the real folder name:
-   `cd ~/aether && unzip -o "$(ls -t ~/storage/downloads/fixN*.zip | head -1)" -d . && git add . && git commit -m "short message" && git push`
-   (GitHub repo: Khereba1/Aether, APK: github.com/Khereba1/Aether/releases/tag/latest)
-5. Say honestly that nothing was compiled or tested, and what to check first on the phone.
-6. If the build fails, the owner sends lines containing `e: ` from the Actions log; fix only those.
-
-## Signing and sharing
-The stable signing key lives in GitHub Secrets (KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD).
-Never print, commit or ask for them, and never ask for the backup folder.
-`bash share_zip.sh` builds a clean `<folder>-for-AI.zip` (no keys, env files, build output or APKs) for sharing.
+## Version History
+- `1.0.0` (1): Initial release.
+- `1.0.1` (2): Fixed `Icons.AutoMirrored.Rounded` casing.
+- `1.0.2` (3): Fixed outer Termux `nohup proot-distro` bridge daemon launch + manual command copy.
+- `1.1.0` (4): Unified font, English LTR UI, Markdown renderer, single-file `/file` download, permanent `agy` `stream-json` parser.
+- `1.2.0` (5): Live in-app Model & Effort picker (`GET /models`), persistent multi-turn `--conversation` context + New Session reset, Stop generation button, direct Open + Share for single files, delete project confirmation, unified 15-slot typography, fixed double Scaffold insets, automatic bridge self-upgrade.

@@ -8,19 +8,22 @@ import com.khereba1.app.data.BridgeClient
 import com.khereba1.app.data.BridgeScripts
 import com.khereba1.app.data.ChatMessage
 import com.khereba1.app.data.CliEngine
+import com.khereba1.app.data.DownloadedArtifact
 import com.khereba1.app.data.LocalStore
+import com.khereba1.app.data.ModelOption
 import com.khereba1.app.data.ProjectInfo
 import com.khereba1.app.data.ProjectTemplate
 import com.khereba1.app.data.SetupStatus
 import com.khereba1.app.data.TermuxBridge
 import com.khereba1.app.data.WorkspaceFile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.UUID
 
 enum class AppScreen { SETUP, CHAT, SETTINGS }
@@ -36,8 +39,11 @@ data class AetherUiState(
     val activeToolStatus: String = "",
     val projectFiles: List<WorkspaceFile> = emptyList(),
     val currentRules: String = "",
+    val availableModels: List<ModelOption> = emptyList(),
+    val defaultCliModel: String = "",
+    val loadingModels: Boolean = false,
     val snackbarMessage: String? = null,
-    val lastExportedZip: File? = null
+    val lastExportedArtifact: DownloadedArtifact? = null
 )
 
 class AetherViewModel(application: Application) : AndroidViewModel(application) {
@@ -45,6 +51,8 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
     private val ctx get() = getApplication<Application>()
     private val _ui = MutableStateFlow(AetherUiState(settings = LocalStore.loadSettings(ctx)))
     val ui: StateFlow<AetherUiState> = _ui.asStateFlow()
+
+    private var streamJob: Job? = null
 
     init {
         refreshEnvironment(autoWake = true, switchToChatIfReady = true)
@@ -58,8 +66,8 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         _ui.update { it.copy(snackbarMessage = null) }
     }
 
-    fun clearLastExportedZip() {
-        _ui.update { it.copy(lastExportedZip = null) }
+    fun clearLastExportedArtifact() {
+        _ui.update { it.copy(lastExportedArtifact = null) }
     }
 
     fun showNotice(msg: String) {
@@ -83,14 +91,20 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             var health = BridgeClient.checkHealth(port)
-            if (!health.reachable && autoWake && termuxOk && permOk) {
-                _ui.update { it.copy(setup = it.setup.copy(statusNote = "جاري تشغيل سيرفر Ubuntu في Termux...")) }
+            val needsUpgrade = health.reachable && health.bridgeVersion != BridgeScripts.BRIDGE_VERSION
+            if ((!health.reachable || needsUpgrade) && autoWake && termuxOk && permOk) {
+                val note = if (needsUpgrade) {
+                    "Updating Ubuntu bridge to v${BridgeScripts.BRIDGE_VERSION}..."
+                } else {
+                    "Starting Ubuntu bridge in Termux..."
+                }
+                _ui.update { it.copy(setup = it.setup.copy(statusNote = note)) }
                 val res = TermuxBridge.runCommand(ctx, BridgeScripts.termuxStartBridgeCommand(port), background = true)
                 if (res.isSuccess) {
-                    for (attempt in 0 until 6) {
+                    for (attempt in 0 until 7) {
                         delay(1200)
                         health = BridgeClient.checkHealth(port)
-                        if (health.reachable) break
+                        if (health.reachable && health.bridgeVersion == BridgeScripts.BRIDGE_VERSION) break
                     }
                 }
             }
@@ -110,6 +124,7 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
 
             if (health.reachable) {
                 loadProjects()
+                loadModels()
             }
         }
     }
@@ -117,14 +132,14 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
     fun triggerAutoBootstrap(background: Boolean = true) {
         viewModelScope.launch {
             val port = _ui.value.settings.port
-            _ui.update { it.copy(setup = it.setup.copy(checking = true, statusNote = "تم إرسال أمر التجهيز والتشغيل إلى Termux...")) }
+            _ui.update { it.copy(setup = it.setup.copy(checking = true, statusNote = "Sent bootstrap command to Termux...")) }
             val result = TermuxBridge.runCommand(ctx, BridgeScripts.termuxStartBridgeCommand(port), background = background)
             if (result.isFailure) {
                 _ui.update {
                     it.copy(
                         setup = it.setup.copy(
                             checking = false,
-                            statusNote = "تعذر تشغيل Termux تلقائياً: تأكد من تفعيل allow-external-apps=true وصلاحية الظهور فوق التطبيقات."
+                            statusNote = "Could not launch Termux automatically. Make sure allow-external-apps=true and Display Over Other Apps are enabled."
                         )
                     )
                 }
@@ -132,7 +147,7 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
             }
             var health = BridgeClient.checkHealth(port)
             for (i in 0 until 8) {
-                if (health.reachable) break
+                if (health.reachable && health.bridgeVersion == BridgeScripts.BRIDGE_VERSION) break
                 delay(1500)
                 health = BridgeClient.checkHealth(port)
             }
@@ -141,12 +156,13 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                     setup = it.setup.copy(
                         health = health,
                         checking = false,
-                        statusNote = if (health.reachable) "تم الاتصال بنجاح!" else "لسه بيتثبت أو محتاج تفتح Termux تشوف التقدم."
+                        statusNote = if (health.reachable) "Connected successfully!" else "Still starting — open Termux or tap Copy Manual."
                     )
                 )
             }
             if (health.reachable) {
                 loadProjects()
+                loadModels()
             }
         }
     }
@@ -155,10 +171,34 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         val cmd = BridgeScripts.cliSetupCommand(engine)
         val res = TermuxBridge.runCommand(ctx, cmd, background = false)
         if (res.isFailure) {
-            showNotice("افتح Termux والصق أمر تثبيت الـ CLI يدوياً.")
+            showNotice("Open Termux and paste the CLI install command.")
         } else {
-            showNotice("تم فتح Termux لتثبيت وتسجيل دخول ${engine.label}")
+            showNotice("Opened Termux to install & sign in to ${engine.label}")
         }
+    }
+
+    fun loadModels() {
+        viewModelScope.launch {
+            _ui.update { it.copy(loadingModels = true) }
+            val resp = BridgeClient.listModels(_ui.value.settings.port)
+            _ui.update {
+                it.copy(
+                    availableModels = resp.models,
+                    defaultCliModel = resp.currentModel,
+                    loadingModels = false
+                )
+            }
+        }
+    }
+
+    fun selectModelAndEffort(modelId: String, effort: String) {
+        val updated = _ui.value.settings.copy(
+            modelOverride = modelId.trim(),
+            effort = effort.trim()
+        )
+        LocalStore.saveSettings(ctx, updated)
+        val label = modelId.ifBlank { "Default (agy)" } + if (effort.isNotBlank()) " · $effort" else ""
+        _ui.update { it.copy(settings = updated, snackbarMessage = "Model: $label") }
     }
 
     fun loadProjects() {
@@ -211,12 +251,12 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                         projects = updated,
                         activeProject = created,
                         messages = emptyList(),
-                        snackbarMessage = "تم إنشاء المشروع: ${created.name}"
+                        snackbarMessage = "Created project: ${created.name}"
                     )
                 }
             } catch (e: Exception) {
                 AppLog.log("PROJECTS", "Create failed", e)
-                showNotice("فشل إنشاء المشروع: ${e.message}")
+                showNotice("Failed to create project: ${e.message}")
             }
         }
     }
@@ -236,12 +276,12 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                         projects = remaining,
                         activeProject = next,
                         messages = msgs,
-                        snackbarMessage = "تم حذف المشروع"
+                        snackbarMessage = "Project deleted"
                     )
                 }
             } catch (e: Exception) {
                 AppLog.log("PROJECTS", "Delete failed", e)
-                showNotice("فشل حذف المشروع: ${e.message}")
+                showNotice("Failed to delete project: ${e.message}")
             }
         }
     }
@@ -249,7 +289,16 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
     fun clearActiveChat() {
         val p = _ui.value.activeProject ?: return
         LocalStore.clearMessages(ctx, p.slug)
-        _ui.update { it.copy(messages = emptyList(), snackbarMessage = "بدأت محادثة جديدة") }
+        _ui.update {
+            it.copy(
+                messages = emptyList(),
+                activeProject = p.copy(hasSession = false),
+                snackbarMessage = "Started a fresh session"
+            )
+        }
+        viewModelScope.launch {
+            BridgeClient.resetSession(_ui.value.settings.port, p.slug)
+        }
     }
 
     fun loadActiveRules() {
@@ -259,7 +308,7 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                 val txt = BridgeClient.getRules(_ui.value.settings.port, p.slug)
                 _ui.update { it.copy(currentRules = txt) }
             } catch (e: Exception) {
-                showNotice("تعذر قراءة GEMINI.md: ${e.message}")
+                showNotice("Failed to load GEMINI.md: ${e.message}")
             }
         }
     }
@@ -269,9 +318,9 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 BridgeClient.saveRules(_ui.value.settings.port, p.slug, rulesText)
-                _ui.update { it.copy(currentRules = rulesText, snackbarMessage = "تم حفظ قواعد المشروع (GEMINI.md)") }
+                _ui.update { it.copy(currentRules = rulesText, snackbarMessage = "Saved project rules (GEMINI.md)") }
             } catch (e: Exception) {
-                showNotice("فشل حفظ القواعد: ${e.message}")
+                showNotice("Failed to save rules: ${e.message}")
             }
         }
     }
@@ -283,7 +332,7 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                 val files = BridgeClient.listFiles(_ui.value.settings.port, p.slug)
                 _ui.update { it.copy(projectFiles = files) }
             } catch (e: Exception) {
-                showNotice("تعذر قراءة ملفات المشروع: ${e.message}")
+                showNotice("Failed to list files: ${e.message}")
             }
         }
     }
@@ -293,12 +342,36 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             try {
                 BridgeClient.uploadFile(_ui.value.settings.port, p.slug, fileName, bytes)
-                showNotice("تم رفع $fileName داخل المشروع")
+                showNotice("Uploaded $fileName to project")
                 loadActiveFiles()
                 loadProjects()
             } catch (e: Exception) {
                 AppLog.log("UPLOAD", "Failed", e)
-                showNotice("فشل رفع الملف: ${e.message}")
+                showNotice("Upload failed: ${e.message}")
+            }
+        }
+    }
+
+    fun exportSingleFile(relPath: String, openDirectly: Boolean = true) {
+        val p = _ui.value.activeProject ?: return
+        viewModelScope.launch {
+            try {
+                val artifact = BridgeClient.downloadSingleFile(
+                    ctx,
+                    _ui.value.settings.port,
+                    p.slug,
+                    relPath,
+                    openDirectly = openDirectly
+                )
+                _ui.update {
+                    it.copy(
+                        lastExportedArtifact = artifact,
+                        snackbarMessage = "Saved ${artifact.file.name} to Downloads/Aether"
+                    )
+                }
+            } catch (e: Exception) {
+                AppLog.log("EXPORT", "Single file export failed", e)
+                showNotice("Download failed: ${e.message}")
             }
         }
     }
@@ -307,16 +380,34 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         val p = _ui.value.activeProject ?: return
         viewModelScope.launch {
             try {
-                val zipFile = BridgeClient.downloadProjectZip(ctx, _ui.value.settings.port, p.slug)
+                val artifact = BridgeClient.downloadProjectZip(ctx, _ui.value.settings.port, p.slug)
                 _ui.update {
                     it.copy(
-                        lastExportedZip = zipFile,
-                        snackbarMessage = "تم حفظ ${zipFile.name} في Downloads/Aether"
+                        lastExportedArtifact = artifact,
+                        snackbarMessage = "Saved ${artifact.file.name} to Downloads/Aether"
                     )
                 }
             } catch (e: Exception) {
                 AppLog.log("EXPORT", "ZIP export failed", e)
-                showNotice("فشل تصدير ZIP: ${e.message}")
+                showNotice("ZIP export failed: ${e.message}")
+            }
+        }
+    }
+
+    fun stopStreaming() {
+        val slug = _ui.value.activeProject?.slug
+        streamJob?.cancel()
+        streamJob = null
+        _ui.update {
+            it.copy(
+                isStreaming = false,
+                activeToolStatus = "",
+                snackbarMessage = "Stopped generation"
+            )
+        }
+        if (slug != null) {
+            viewModelScope.launch {
+                BridgeClient.cancelChat(_ui.value.settings.port, slug)
             }
         }
     }
@@ -325,12 +416,12 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
         val clean = promptText.trim()
         if (clean.isEmpty() || _ui.value.isStreaming) return
 
-        viewModelScope.launch {
+        streamJob = viewModelScope.launch {
             val port = _ui.value.settings.port
             var project = _ui.value.activeProject
             if (project == null) {
                 try {
-                    project = BridgeClient.createProject(port, "عام", ProjectTemplate.CODING.defaultRules)
+                    project = BridgeClient.createProject(port, "General", ProjectTemplate.CODING.defaultRules)
                     _ui.update {
                         it.copy(
                             projects = listOf(project) + it.projects,
@@ -339,7 +430,7 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     LocalStore.saveLastProject(ctx, project.slug)
                 } catch (e: Exception) {
-                    showNotice("السيرفر مش متصل. افتح شاشة تهيئة البيئة الأول.")
+                    showNotice("Bridge offline. Open Environment Setup first.")
                     return@launch
                 }
             }
@@ -370,81 +461,96 @@ class AetherViewModel(application: Application) : AndroidViewModel(application) 
             val tools = mutableListOf<String>()
             var hadError = false
 
-            BridgeClient.streamChat(
-                port = port,
-                slug = project.slug,
-                prompt = clean,
-                settings = _ui.value.settings,
-                onDelta = { chunk ->
-                    buf.append(chunk)
-                    val currentText = buf.toString()
-                    _ui.update { state ->
-                        state.copy(
-                            messages = state.messages.map { m ->
-                                if (m.id == assistantId) m.copy(text = currentText) else m
-                            }
-                        )
-                    }
-                },
-                onTool = { toolName ->
-                    if (toolName.isNotBlank() && toolName !in tools) tools.add(toolName)
-                    val snapshotTools = tools.toList()
-                    _ui.update { state ->
-                        state.copy(
-                            activeToolStatus = toolName,
-                            messages = state.messages.map { m ->
-                                if (m.id == assistantId) m.copy(toolEvents = snapshotTools) else m
-                            }
-                        )
-                    }
-                },
-                onDone = { changedFiles ->
-                    val finalText = buf.toString().ifBlank {
-                        if (hadError) "" else "تم التنفيذ."
-                    }
-                    _ui.update { state ->
-                        val updated = state.messages.map { m ->
-                            if (m.id == assistantId) {
-                                m.copy(
-                                    text = if (m.text.isBlank()) finalText else m.text,
-                                    changedFiles = changedFiles,
-                                    toolEvents = tools.toList()
-                                )
-                            } else m
+            try {
+                BridgeClient.streamChat(
+                    port = port,
+                    slug = project.slug,
+                    prompt = clean,
+                    settings = _ui.value.settings,
+                    onDelta = { chunk ->
+                        buf.append(chunk)
+                        val currentText = buf.toString()
+                        _ui.update { state ->
+                            state.copy(
+                                messages = state.messages.map { m ->
+                                    if (m.id == assistantId) m.copy(text = currentText) else m
+                                }
+                            )
                         }
-                        LocalStore.saveMessages(ctx, project.slug, updated)
-                        state.copy(
-                            messages = updated,
-                            isStreaming = false,
-                            activeToolStatus = ""
-                        )
-                    }
-                    if (changedFiles.isNotEmpty()) {
-                        loadProjects()
-                    }
-                },
-                onError = { errText ->
-                    hadError = true
-                    buf.append(if (buf.isNotEmpty()) "\n\n⚠️ $errText" else "⚠️ $errText")
-                    val errFinal = buf.toString()
-                    _ui.update { state ->
-                        val updated = state.messages.map { m ->
-                            if (m.id == assistantId) m.copy(text = errFinal, isError = true) else m
+                    },
+                    onTool = { toolName ->
+                        if (toolName.isNotBlank() && toolName !in tools) tools.add(toolName)
+                        val snapshotTools = tools.toList()
+                        _ui.update { state ->
+                            state.copy(
+                                activeToolStatus = toolName,
+                                messages = state.messages.map { m ->
+                                    if (m.id == assistantId) m.copy(toolEvents = snapshotTools) else m
+                                }
+                            )
                         }
-                        LocalStore.saveMessages(ctx, project.slug, updated)
-                        state.copy(
-                            messages = updated,
-                            isStreaming = false,
-                            activeToolStatus = ""
-                        )
+                    },
+                    onDone = { changedFiles, hasSession ->
+                        val finalText = buf.toString().ifBlank {
+                            if (hadError) "" else "Done."
+                        }
+                        _ui.update { state ->
+                            val updated = state.messages.map { m ->
+                                if (m.id == assistantId) {
+                                    m.copy(
+                                        text = if (m.text.isBlank()) finalText else m.text,
+                                        changedFiles = changedFiles,
+                                        toolEvents = tools.toList()
+                                    )
+                                } else m
+                            }
+                            LocalStore.saveMessages(ctx, project.slug, updated)
+                            val updatedProject = state.activeProject?.let {
+                                if (it.slug == project.slug) it.copy(hasSession = hasSession) else it
+                            }
+                            state.copy(
+                                messages = updated,
+                                activeProject = updatedProject,
+                                isStreaming = false,
+                                activeToolStatus = ""
+                            )
+                        }
+                        if (changedFiles.isNotEmpty()) {
+                            loadProjects()
+                        }
+                    },
+                    onError = { errText ->
+                        hadError = true
+                        buf.append(if (buf.isNotEmpty()) "\n\n$errText" else errText)
+                        val errFinal = buf.toString()
+                        _ui.update { state ->
+                            val updated = state.messages.map { m ->
+                                if (m.id == assistantId) m.copy(text = errFinal, isError = true) else m
+                            }
+                            LocalStore.saveMessages(ctx, project.slug, updated)
+                            state.copy(
+                                messages = updated,
+                                isStreaming = false,
+                                activeToolStatus = ""
+                            )
+                        }
                     }
+                )
+            } catch (_: CancellationException) {
+                val partial = buf.toString().ifBlank { "(Stopped)" }
+                _ui.update { state ->
+                    val updated = state.messages.map { m ->
+                        if (m.id == assistantId) m.copy(text = partial) else m
+                    }
+                    LocalStore.saveMessages(ctx, project.slug, updated)
+                    state.copy(messages = updated, isStreaming = false, activeToolStatus = "")
                 }
-            )
+            }
         }
     }
 
     fun updateSettings(newSettings: AppSettings) {
         LocalStore.saveSettings(ctx, newSettings)
-        _ui.update { it.copy(settings = newSettings, snackbarMessage = "تم حفظ الإعدادات") }
+        _ui.update { it.copy(settings = newSettings, snackbarMessage = "Settings saved") }
     }
 }

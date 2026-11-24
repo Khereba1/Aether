@@ -1,7 +1,7 @@
 package com.khereba1.app.data
 
 enum class CliEngine(val id: String, val binary: String, val label: String) {
-    ANTIGRAVITY("antigravity", "agy", "Antigravity CLI (Google AI Pro)"),
+    ANTIGRAVITY("antigravity", "agy", "Antigravity CLI (agy)"),
     GEMINI("gemini", "gemini", "Gemini CLI (API Key)"),
     CLAUDE("claude", "claude", "Claude Code"),
     CUSTOM("custom", "", "Custom CLI");
@@ -46,11 +46,17 @@ enum class ProjectTemplate(val id: String, val labelAr: String, val labelEn: Str
     )
 }
 
+data class ModelOption(
+    val id: String,
+    val label: String
+)
+
 data class ProjectInfo(
     val slug: String,
     val name: String,
     val fileCount: Int = 0,
     val hasRules: Boolean = false,
+    val hasSession: Boolean = false,
     val updatedAt: Long = 0L
 )
 
@@ -70,18 +76,11 @@ data class ChatMessage(
     val isError: Boolean = false
 )
 
-data class ChatSession(
-    val id: String,
-    val projectSlug: String,
-    val title: String,
-    val messages: List<ChatMessage> = emptyList(),
-    val updatedAt: Long = System.currentTimeMillis()
-)
-
 data class BridgeHealth(
     val reachable: Boolean = false,
     val ubuntuReady: Boolean = false,
     val pythonVersion: String = "",
+    val bridgeVersion: String = "",
     val clis: Map<String, Boolean> = emptyMap(),
     val workspacesDir: String = ""
 )
@@ -102,6 +101,7 @@ data class AppSettings(
     val cliEngine: CliEngine = CliEngine.ANTIGRAVITY,
     val customBinary: String = "",
     val modelOverride: String = "",
+    val effort: String = "", // "", "low", "medium", "high"
     val themeMode: String = "system", // "system", "light", "dark"
-    val language: String = "system"   // "system", "ar", "en"
+    val language: String = "en"
 )
