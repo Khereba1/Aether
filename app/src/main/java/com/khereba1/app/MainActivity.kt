@@ -22,12 +22,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.core.content.FileProvider
+import com.khereba1.app.data.DownloadedArtifact
 import com.khereba1.app.data.TermuxBridge
 import com.khereba1.app.ui.AetherTheme
 import com.khereba1.app.ui.ChatScreen
 import com.khereba1.app.ui.SettingsScreen
 import com.khereba1.app.ui.SetupScreen
-import java.io.File
 
 class MainActivity : ComponentActivity() {
 
@@ -65,11 +65,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            LaunchedEffect(state.lastExportedZip) {
-                val zipFile = state.lastExportedZip
-                if (zipFile != null && zipFile.exists()) {
-                    shareZipFile(zipFile)
-                    vm.clearLastExportedZip()
+            LaunchedEffect(state.lastExportedArtifact) {
+                val artifact = state.lastExportedArtifact
+                if (artifact != null && artifact.file.exists()) {
+                    shareArtifact(artifact)
+                    vm.clearLastExportedArtifact()
                 }
             }
 
@@ -106,6 +106,7 @@ class MainActivity : ComponentActivity() {
                                 onSaveRules = { vm.saveActiveRules(it) },
                                 onLoadFiles = { vm.loadActiveFiles() },
                                 onPickUploadFile = { filePickerLauncher.launch(arrayOf("*/*")) },
+                                onExportSingleFile = { path -> vm.exportSingleFile(path) },
                                 onExportZip = { vm.exportActiveProjectZip() },
                                 onOpenSettings = { vm.navigateTo(AppScreen.SETTINGS) },
                                 onOpenSetup = { vm.navigateTo(AppScreen.SETUP) },
@@ -145,19 +146,19 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             AppLog.log("PICKER", "Failed to read picked file", e)
-            vm.showNotice("تعذر قراءة الملف المختار")
+            vm.showNotice("Could not read selected file")
         }
     }
 
-    private fun shareZipFile(file: File) {
+    private fun shareArtifact(artifact: DownloadedArtifact) {
         try {
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", artifact.file)
             val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/zip"
+                type = artifact.mimeType
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(Intent.createChooser(intent, "مشاركة ${file.name}"))
+            startActivity(Intent.createChooser(intent, "Open or share ${artifact.file.name}"))
         } catch (e: Exception) {
             AppLog.log("SHARE", "Failed to open share sheet", e)
         }

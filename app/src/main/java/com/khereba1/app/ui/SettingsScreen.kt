@@ -58,14 +58,13 @@ fun SettingsScreen(
     var modelOverride by remember(settings) { mutableStateOf(settings.modelOverride) }
     var portText by remember(settings) { mutableStateOf(settings.port.toString()) }
     var themeMode by remember(settings) { mutableStateOf(settings.themeMode) }
-    var language by remember(settings) { mutableStateOf(settings.language) }
     var logText by remember { mutableStateOf(AppLog.read()) }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text("الإعدادات", style = MaterialTheme.typography.titleMedium) },
+                title = { Text("Settings", style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Back")
@@ -85,7 +84,7 @@ fun SettingsScreen(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text("محرك الـ CLI", style = MaterialTheme.typography.titleMedium)
+            Text("CLI Engine", style = MaterialTheme.typography.titleMedium)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 CliEngine.entries.forEach { item ->
                     FilterChip(
@@ -100,7 +99,7 @@ fun SettingsScreen(
                 OutlinedTextField(
                     value = customBin,
                     onValueChange = { customBin = it },
-                    label = { Text("اسم الأمر المخصص (Binary)") },
+                    label = { Text("Custom CLI binary name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -109,7 +108,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = modelOverride,
                 onValueChange = { modelOverride = it },
-                label = { Text("موديل محدد (اختياري — اتركه فاضي للافتراضي)") },
+                label = { Text("Model override (optional — leave blank for default)") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -117,28 +116,17 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = portText,
                 onValueChange = { portText = it.filter { ch -> ch.isDigit() } },
-                label = { Text("منفذ السيرفر المحلي (Port)") },
+                label = { Text("Local bridge port") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Text("المظهر (Theme)", style = MaterialTheme.typography.titleMedium)
+            Text("Theme", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("system" to "النظام", "light" to "فاتح", "dark" to "داكن").forEach { (k, label) ->
+                listOf("system" to "System", "light" to "Light", "dark" to "Dark").forEach { (k, label) ->
                     FilterChip(
                         selected = themeMode == k,
                         onClick = { themeMode = k },
-                        label = { Text(label) }
-                    )
-                }
-            }
-
-            Text("اللغة (Language)", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("system" to "تلقائي", "ar" to "العربية", "en" to "English").forEach { (k, label) ->
-                    FilterChip(
-                        selected = language == k,
-                        onClick = { language = k },
                         label = { Text(label) }
                     )
                 }
@@ -148,7 +136,6 @@ fun SettingsScreen(
                 Button(
                     onClick = {
                         val parsedPort = portText.toIntOrNull()?.coerceIn(1024, 65535) ?: 8765
-                        val langChanged = language != settings.language
                         onSave(
                             AppSettings(
                                 port = parsedPort,
@@ -156,26 +143,26 @@ fun SettingsScreen(
                                 customBinary = customBin.trim(),
                                 modelOverride = modelOverride.trim(),
                                 themeMode = themeMode,
-                                language = language
+                                language = "en"
                             ),
-                            langChanged
+                            false
                         )
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("حفظ الإعدادات")
+                    Text("Save Settings")
                 }
                 OutlinedButton(
                     onClick = onOpenSetup,
                     shape = RoundedCornerShape(12.dp)
                 ) {
-                    Text("فحص البيئة")
+                    Text("Setup Check")
                 }
             }
 
             Spacer(Modifier.height(8.dp))
-            Text("سجل التطبيق (AppLog)", style = MaterialTheme.typography.titleMedium)
+            Text("AppLog", style = MaterialTheme.typography.titleMedium)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -184,7 +171,7 @@ fun SettingsScreen(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = logText.ifBlank { "السجل فاضي." }.takeLast(2500),
+                    text = logText.ifBlank { "Log is empty." }.takeLast(2500),
                     style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -194,21 +181,21 @@ fun SettingsScreen(
                     onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                         cm?.setPrimaryClip(ClipData.newPlainText("aether_log", AppLog.read()))
-                        onNotice("تم نسخ السجل")
+                        onNotice("Log copied")
                     },
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("نسخ السجل")
+                    Text("Copy Log")
                 }
                 OutlinedButton(
                     onClick = {
                         AppLog.clear()
                         logText = ""
-                        onNotice("تم مسح السجل")
+                        onNotice("Log cleared")
                     },
                     shape = RoundedCornerShape(10.dp)
                 ) {
-                    Text("مسح السجل")
+                    Text("Clear Log")
                 }
             }
             Spacer(Modifier.height(24.dp))

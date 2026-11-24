@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderZip
 import androidx.compose.material.icons.rounded.Menu
@@ -76,13 +77,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khereba1.app.AetherUiState
 import com.khereba1.app.data.ChatMessage
 import com.khereba1.app.data.ProjectInfo
 import com.khereba1.app.data.ProjectTemplate
+import com.khereba1.app.data.WorkspaceFile
 import kotlinx.coroutines.launch
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -97,6 +101,7 @@ fun ChatScreen(
     onSaveRules: (String) -> Unit,
     onLoadFiles: () -> Unit,
     onPickUploadFile: () -> Unit,
+    onExportSingleFile: (String) -> Unit,
     onExportZip: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenSetup: () -> Unit,
@@ -150,11 +155,11 @@ fun ChatScreen(
                     ) {
                         Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("مشروع معزول جديد")
+                        Text("New Project")
                     }
                     Spacer(Modifier.height(14.dp))
                     Text(
-                        text = "المشاريع (${state.projects.size})",
+                        text = "Projects (${state.projects.size})",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -174,7 +179,7 @@ fun ChatScreen(
                                     Column {
                                         Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         Text(
-                                            text = "${project.fileCount} ملف" + if (project.hasRules) " · GEMINI.md" else "",
+                                            text = "${project.fileCount} files" + if (project.hasRules) " · GEMINI.md" else "",
                                             style = MaterialTheme.typography.labelMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -202,7 +207,7 @@ fun ChatScreen(
                         },
                         icon = { Icon(Icons.Rounded.Terminal, contentDescription = null) },
                         label = {
-                            Text(if (state.setup.health.reachable) "البيئة (متصل)" else "تهيئة البيئة (غير متصل)")
+                            Text(if (state.setup.health.reachable) "Environment (Connected)" else "Environment Setup")
                         }
                     )
                     NavigationDrawerItem(
@@ -212,7 +217,7 @@ fun ChatScreen(
                             onOpenSettings()
                         },
                         icon = { Icon(Icons.Rounded.Settings, contentDescription = null) },
-                        label = { Text("الإعدادات والسجل") }
+                        label = { Text("Settings & Logs") }
                     )
                 }
             }
@@ -253,7 +258,7 @@ fun ChatScreen(
                                     text = if (state.setup.health.reachable) {
                                         state.settings.cliEngine.binary.ifBlank { "CLI" }
                                     } else {
-                                        "غير متصل — اضغط للتشغيل"
+                                        "Offline — tap to reconnect"
                                     },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -276,7 +281,7 @@ fun ChatScreen(
                                 onLoadFiles()
                                 showFilesDialog = true
                             }) {
-                                Icon(Icons.Rounded.FolderZip, contentDescription = "Files and ZIP")
+                                Icon(Icons.Rounded.FolderZip, contentDescription = "Files")
                             }
                             IconButton(onClick = onClearChat) {
                                 Icon(Icons.Rounded.Add, contentDescription = "New chat")
@@ -310,7 +315,7 @@ fun ChatScreen(
                             .weight(1f)
                             .fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
                         items(state.messages, key = { it.id }) { msg ->
                             MessageItem(
@@ -318,8 +323,10 @@ fun ChatScreen(
                                 onCopy = {
                                     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                                     cm?.setPrimaryClip(ClipData.newPlainText("aether_msg", msg.text))
-                                    onNotice("تم نسخ الرد")
+                                    onNotice("Copied to clipboard")
                                 },
+                                onCodeCopied = onNotice,
+                                onExportSingleFile = onExportSingleFile,
                                 onExportZip = onExportZip
                             )
                         }
@@ -332,7 +339,7 @@ fun ChatScreen(
                                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = "شغال على أداة: ${state.activeToolStatus}",
+                                        text = "Running tool: ${state.activeToolStatus}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary
                                     )
@@ -370,9 +377,12 @@ fun ChatScreen(
                         TextField(
                             value = inputText,
                             onValueChange = { inputText = it },
-                            placeholder = { Text("اكتب لـ Aether…") },
+                            placeholder = { Text("Message Aether…") },
                             modifier = Modifier.weight(1f),
                             maxLines = 5,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                textDirection = TextDirection.Content
+                            ),
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent,
@@ -449,6 +459,10 @@ fun ChatScreen(
                 showFilesDialog = false
                 onPickUploadFile()
             },
+            onDownloadFile = { fileName ->
+                showFilesDialog = false
+                onExportSingleFile(fileName)
+            },
             onExportZip = {
                 showFilesDialog = false
                 onExportZip()
@@ -487,13 +501,13 @@ private fun WelcomeEmptyState(
         }
         Spacer(Modifier.height(16.dp))
         Text(
-            text = "تحب نشتغل على إيه النهارده؟",
+            text = "What would you like to build?",
             style = MaterialTheme.typography.headlineMedium,
             color = MaterialTheme.colorScheme.onBackground
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = (projectName?.let { "مشروع: $it · " } ?: "") + engineLabel,
+            text = (projectName?.let { "$it · " } ?: "") + engineLabel,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -502,9 +516,9 @@ private fun WelcomeEmptyState(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            QuickChip("استعرض الملفات الموجودة في المشروع ده ولخّصلي هيكلها") { onQuickPrompt(it) }
-            QuickChip("اعملي ملخص منظم حسب قواعد GEMINI.md للملفات المرفوعة") { onQuickPrompt(it) }
-            QuickChip("جهّزلي ملفات المشروع النهائية عشان أعملها تصدير ZIP") { onQuickPrompt(it) }
+            QuickChip("Inspect files in this workspace and summarize the structure") { onQuickPrompt(it) }
+            QuickChip("Summarize the uploaded notes following GEMINI.md rules") { onQuickPrompt(it) }
+            QuickChip("Build a clean single-file HTML tool and save it here") { onQuickPrompt(it) }
         }
     }
 }
@@ -532,6 +546,8 @@ private fun QuickChip(text: String, onClick: (String) -> Unit) {
 private fun MessageItem(
     message: ChatMessage,
     onCopy: () -> Unit,
+    onCodeCopied: (String) -> Unit,
+    onExportSingleFile: (String) -> Unit,
     onExportZip: () -> Unit
 ) {
     val isUser = message.role == "user"
@@ -545,7 +561,7 @@ private fun MessageItem(
                 Text(
                     text = message.text,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyLarge.copy(textDirection = TextDirection.Content),
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
@@ -596,13 +612,16 @@ private fun MessageItem(
                 }
             }
 
-            Text(
-                text = message.text.ifBlank { "…" },
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (message.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground
+            MarkdownText(
+                markdown = message.text.ifBlank { "…" },
+                textColor = if (message.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
+                onCodeCopied = onCodeCopied
             )
 
+            // Smart file card: 1 file -> download directly as its native file; multiple files -> ZIP
             if (message.changedFiles.isNotEmpty()) {
+                val singleFile = if (message.changedFiles.size == 1) message.changedFiles.first() else null
+                val singleName = singleFile?.let { File(it).name }
                 Card(
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -615,27 +634,35 @@ private fun MessageItem(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            Icons.Rounded.FolderZip,
+                            imageVector = if (singleFile != null) Icons.Rounded.Download else Icons.Rounded.FolderZip,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "تم تعديل/إنشاء ${message.changedFiles.size} ملف",
+                                text = if (singleName != null) singleName else "${message.changedFiles.size} files updated",
                                 style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = message.changedFiles.take(3).joinToString("، "),
+                                text = if (singleFile != null) "Ready to open or share" else message.changedFiles.take(3).joinToString(", "),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        Button(onClick = onExportZip, shape = RoundedCornerShape(10.dp)) {
-                            Text("تحميل ZIP")
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (singleFile != null) onExportSingleFile(singleFile) else onExportZip()
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text(if (singleFile != null) "Download" else "ZIP", maxLines = 1)
                         }
                     }
                 }
@@ -655,13 +682,13 @@ private fun NewProjectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("مشروع معزول جديد") },
+        title = { Text("New Isolated Project") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("اسم المشروع (مثلاً: ملخصات التمريض)") },
+                    label = { Text("Project name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -673,14 +700,14 @@ private fun NewProjectDialog(
                                 template = t
                                 rules = t.defaultRules
                             },
-                            label = { Text(t.labelAr) }
+                            label = { Text(t.labelEn, maxLines = 1) }
                         )
                     }
                 }
                 OutlinedTextField(
                     value = rules,
                     onValueChange = { rules = it },
-                    label = { Text("قواعد المشروع (GEMINI.md)") },
+                    label = { Text("Project rules (GEMINI.md)") },
                     minLines = 4,
                     maxLines = 6,
                     modifier = Modifier.fillMaxWidth()
@@ -689,13 +716,13 @@ private fun NewProjectDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onCreate(name.ifBlank { "مشروع جديد" }, template, rules) }
+                onClick = { onCreate(name.ifBlank { "New Project" }, template, rules) }
             ) {
-                Text("إنشاء")
+                Text("Create")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("إلغاء") }
+            TextButton(onClick = onDismiss) { Text("Cancel") }
         }
     )
 }
@@ -710,7 +737,7 @@ private fun RulesEditorDialog(
     var text by remember(initialRules) { mutableStateOf(initialRules) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("قواعد وذاكرة: $projectName") },
+        title = { Text("Rules & Memory: $projectName") },
         text = {
             OutlinedTextField(
                 value = text,
@@ -722,10 +749,10 @@ private fun RulesEditorDialog(
             )
         },
         confirmButton = {
-            Button(onClick = { onSave(text) }) { Text("حفظ") }
+            Button(onClick = { onSave(text) }) { Text("Save") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("إغلاق") }
+            TextButton(onClick = onDismiss) { Text("Close") }
         }
     )
 }
@@ -733,21 +760,35 @@ private fun RulesEditorDialog(
 @Composable
 private fun ProjectFilesDialog(
     projectName: String,
-    files: List<com.khereba1.app.data.WorkspaceFile>,
+    files: List<WorkspaceFile>,
     onDismiss: () -> Unit,
     onUpload: () -> Unit,
+    onDownloadFile: (String) -> Unit,
     onExportZip: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("ملفات مشروع: $projectName") },
+        title = { Text("Files: $projectName") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (files.isEmpty()) {
-                    Text("الفولدر فاضي حالياً.", style = MaterialTheme.typography.bodyMedium)
+                    Text("This workspace folder is empty.", style = MaterialTheme.typography.bodyMedium)
                 } else {
+                    Text(
+                        text = "Tap any file to download it directly:",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     files.take(15).forEach { f ->
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = !f.isDir) { onDownloadFile(f.name) }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
                                 text = (if (f.isDir) "📁 " else "📄 ") + f.name,
                                 style = MaterialTheme.typography.bodyMedium,
@@ -759,7 +800,7 @@ private fun ProjectFilesDialog(
                                 Text(
                                     text = "${(f.sizeBytes / 1024).coerceAtLeast(1)} KB",
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -768,16 +809,16 @@ private fun ProjectFilesDialog(
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onUpload, modifier = Modifier.weight(1f)) {
-                        Text("رفع ملف")
+                        Text("Upload", maxLines = 1)
                     }
                     Button(onClick = onExportZip, modifier = Modifier.weight(1f)) {
-                        Text("تحميل ZIP")
+                        Text("Export ZIP", maxLines = 1)
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("تم") }
+            TextButton(onClick = onDismiss) { Text("Done") }
         }
     )
 }
