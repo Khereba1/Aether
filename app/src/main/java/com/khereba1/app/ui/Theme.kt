@@ -6,26 +6,15 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
-import com.khereba1.app.R
 
+// Claude-inspired warm editorial palette
 val TerracottaLight = Color(0xFFC96442)
 val TerracottaDark = Color(0xFFD97757)
-
-val AetherFont = FontFamily(
-    Font(R.font.noto_sans_arabic_regular, FontWeight.Normal),
-    Font(R.font.noto_sans_arabic_bold, FontWeight.Medium),
-    Font(R.font.noto_sans_arabic_bold, FontWeight.SemiBold),
-    Font(R.font.noto_sans_arabic_bold, FontWeight.Bold)
-)
 
 private val LightColors = lightColorScheme(
     primary = TerracottaLight,
@@ -71,53 +60,46 @@ private val DarkColors = darkColorScheme(
 
 private val AetherTypography = Typography(
     headlineMedium = TextStyle(
-        fontFamily = AetherFont,
-        fontWeight = FontWeight.Bold,
-        fontSize = 24.sp,
-        lineHeight = 32.sp
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Normal,
+        fontSize = 26.sp,
+        lineHeight = 34.sp
     ),
     headlineSmall = TextStyle(
-        fontFamily = AetherFont,
-        fontWeight = FontWeight.Bold,
-        fontSize = 20.sp,
+        fontFamily = FontFamily.Serif,
+        fontWeight = FontWeight.Medium,
+        fontSize = 21.sp,
         lineHeight = 28.sp
     ),
     titleMedium = TextStyle(
-        fontFamily = AetherFont,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 15.sp,
+        fontSize = 16.sp,
         lineHeight = 22.sp
     ),
     bodyLarge = TextStyle(
-        fontFamily = AetherFont,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 15.sp,
-        lineHeight = 24.sp
+        lineHeight = 23.sp
     ),
     bodyMedium = TextStyle(
-        fontFamily = AetherFont,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 14.sp,
-        lineHeight = 21.sp
+        lineHeight = 20.sp
     ),
     labelMedium = TextStyle(
-        fontFamily = AetherFont,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 12.sp,
-        lineHeight = 17.sp
-    ),
-    labelLarge = TextStyle(
-        fontFamily = AetherFont,
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 14.sp,
-        lineHeight = 20.sp
+        lineHeight = 16.sp
     )
 )
 
 @Composable
 fun AetherTheme(
     themeMode: String = "system",
-    language: String = "en",
     content: @Composable () -> Unit
 ) {
     val dark = when (themeMode) {
@@ -125,12 +107,9 @@ fun AetherTheme(
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    val direction = if (language == "ar") LayoutDirection.Rtl else LayoutDirection.Ltr
-    CompositionLocalProvider(LocalLayoutDirection provides direction) {
-        MaterialTheme(
-            colorScheme = if (dark) DarkColors else LightColors,
-            typography = AetherTypography,
-            content = content
-        )
-    }
+    MaterialTheme(
+        colorScheme = if (dark) DarkColors else LightColors,
+        typography = AetherTypography,
+        content = content
+    )
 }

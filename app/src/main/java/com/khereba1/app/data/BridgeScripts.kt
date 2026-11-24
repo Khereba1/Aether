@@ -26,8 +26,7 @@ import time
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-import mimetypes
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import unquote, urlparse
 
 PORT = int(os.environ.get("AETHER_PORT", "8765"))
 WORKSPACES = Path.home() / "aether_workspaces"
@@ -93,10 +92,10 @@ def build_cli_cmd(engine: str, custom_bin: str, model: str, prompt: str) -> tupl
     if not binary or shutil.which(binary) is None:
         return None, None
     if binary == "agy":
-        cmd = [binary, "-p", prompt, "--output-format", "stream-json"]
+        cmd = [binary, "--output-format", "stream-json"]
         if model:
             cmd += ["--model", model]
-        return cmd, None
+        return cmd, prompt
     if binary == "gemini":
         cmd = [binary, "-p", prompt, "--output-format", "stream-json"]
         if model:
@@ -121,26 +120,6 @@ def extract_stream_event(line: str):
         obj = json.loads(s)
     except Exception:
         return {"type": "delta", "text": s + "\n"}
-    ev_name = str(obj.get("event", "")).lower()
-    if ev_name == "step_update":
-        su = obj.get("step_update") or {}
-        td = su.get("text_delta")
-        if isinstance(td, str) and td:
-            return {"type": "delta", "text": td}
-        st = str(su.get("step_type", ""))
-        if st and st not in ("user_input", "agent_response") and su.get("state") == "ACTIVE":
-            return {"type": "tool", "name": str(su.get("tool_name") or st)}
-        return None
-    if ev_name == "result":
-        res = obj.get("result") or {}
-        if res.get("error"):
-            return {"type": "error", "text": str(res.get("error"))}
-        resp = res.get("response")
-        if isinstance(resp, str) and resp:
-            return {"type": "final", "text": resp}
-        return None
-    if ev_name == "init":
-        return None
     etype = str(obj.get("type", "")).lower()
     if etype in ("content_block_delta", "message_delta", "delta", "text", "assistant", "message"):
         for key in ("delta", "text", "content", "response", "message"):
@@ -237,27 +216,6 @@ class Handler(BaseHTTPRequestHandler):
                         st = child.stat()
                         files.append({"name": child.name, "size": st.st_size, "is_dir": child.is_dir()})
                 self._send_json(200, {"files": files})
-                return
-
-            if len(parts) == 3 and parts[0] == "projects" and parts[2] == "file":
-                p = project_dir(parts[1])
-                qs = parse_qs(parsed.query)
-                rel = (qs.get("path") or [""])[0].strip()
-                if not rel:
-                    self._send_json(400, {"error": "Missing path"})
-                    return
-                target = (p / rel).resolve()
-                if not str(target).startswith(str(p.resolve()) + os.sep) or not target.is_file():
-                    self._send_json(404, {"error": "File not found"})
-                    return
-                data = target.read_bytes()
-                ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-                self.send_response(200)
-                self.send_header("Content-Type", ctype)
-                self.send_header("Content-Disposition", f'attachment; filename="{target.name}"')
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
                 return
 
             if len(parts) == 3 and parts[0] == "projects" and parts[2] == "zip":
@@ -441,13 +399,17 @@ if __name__ == "__main__":
      */
     fun termuxStartBridgeCommand(port: Int): String {
         val b64 = bridgeBase64()
-        val prepareUbuntu = """
+        val innerUbuntu = """
 mkdir -p ~/aether ~/aether_workspaces
 if ! command -v python3 >/dev/null 2>&1; then
   apt-get update -y && apt-get install -y python3 curl ca-certificates
 fi
 echo '$b64' | base64 -d > ~/aether/aether_bridge.py
 chmod +x ~/aether/aether_bridge.py
+if ! pgrep -f 'aether_bridge.py' >/dev/null 2>&1; then
+  AETHER_PORT=$port nohup python3 ~/aether/aether_bridge.py > ~/aether/bridge.log 2>&1 &
+  sleep 1
+fi
 """.trimIndent().replace("\"", "\\\"")
 
         return """
@@ -458,10 +420,7 @@ fi
 if [ ! -d "${'$'}PREFIX/var/lib/proot-distro/installed-rootfs/ubuntu" ]; then
   proot-distro install ubuntu
 fi
-proot-distro login ubuntu -- bash -c "$prepareUbuntu"
-pkill -f aether_bridge.py 2>/dev/null || true
-nohup proot-distro login ubuntu -- bash -c "AETHER_PORT=$port python3 ~/aether/aether_bridge.py" > ~/aether_bridge.log 2>&1 </dev/null &
-sleep 2
+proot-distro login ubuntu -- bash -c "$innerUbuntu"
 """.trimIndent()
     }
 
@@ -470,7 +429,7 @@ sleep 2
      */
     fun cliSetupCommand(engine: CliEngine): String = when (engine) {
         CliEngine.ANTIGRAVITY ->
-            "proot-distro login ubuntu -- bash -c 'echo \"=== Aether: Antigravity CLI Setup ===\"; if ! command -v agy >/dev/null 2>&1; then echo \"Installing Antigravity CLI...\"; curl -fsSL https://antigravity.google/cli/install.sh | bash && ln -sf \"\$HOME/.local/bin/agy\" /usr/local/bin/agy; fi; agy --version; echo \"Starting sign-in (open the link in your browser)...\"; agy; exec bash'"
+            "proot-distro login ubuntu -- bash -c 'echo \"=== Aether: Antigravity CLI Setup ===\"; if ! command -v agy >/dev/null 2>&1; then echo \"Installing Antigravity CLI...\"; curl -fsSL https://antigravity.google/install.sh | bash; fi; agy --version; echo \"Starting sign-in (open the link in your browser)...\"; agy; exec bash'"
         CliEngine.GEMINI ->
             "proot-distro login ubuntu -- bash -c 'echo \"=== Aether: Gemini CLI Setup ===\"; if ! command -v npm >/dev/null 2>&1; then apt-get update -y && apt-get install -y nodejs npm; fi; npm install -g @google/gemini-cli; gemini --version; exec bash'"
         CliEngine.CLAUDE ->

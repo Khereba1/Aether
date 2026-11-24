@@ -46,7 +46,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.khereba1.app.AetherUiState
 import com.khereba1.app.data.BridgeScripts
@@ -68,7 +67,6 @@ fun SetupScreen(
     val health = setup.health
     val activeCliKey = state.settings.cliEngine.binary
     val cliReady = if (activeCliKey.isEmpty()) true else (health.clis[activeCliKey] == true)
-    val manualBridgeCmd = BridgeScripts.termuxStartBridgeCommand(state.settings.port)
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background
@@ -78,7 +76,7 @@ fun SetupScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 20.dp),
+                .padding(horizontal = 20.dp, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -98,12 +96,12 @@ fun SetupScreen(
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Aether Setup",
+                        text = "تهيئة Aether",
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = "Automatic check for Termux, Ubuntu & CLI",
+                        text = "فحص تلقائي لـ Termux و Ubuntu والـ CLI",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -124,8 +122,7 @@ fun SetupScreen(
             if (setup.statusNote.isNotBlank()) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    shape = RoundedCornerShape(14.dp)
                 ) {
                     Text(
                         text = setup.statusNote,
@@ -136,14 +133,15 @@ fun SetupScreen(
                 }
             }
 
+            // Step 1: Termux Installed
             StepCard(
                 stepNumber = "1",
-                title = "Termux App",
+                title = "تطبيق Termux",
                 ok = setup.termuxInstalled,
                 subtitle = if (setup.termuxInstalled) {
-                    "Installed on your device."
+                    "موجود ومثبت على جهازك."
                 } else {
-                    "Not installed — download the F-Droid build (not Google Play)."
+                    "مش مثبت — نزّل نسخة F-Droid (مش Google Play)."
                 }
             ) {
                 if (!setup.termuxInstalled) {
@@ -153,20 +151,17 @@ fun SetupScreen(
                     ) {
                         Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Download Termux (F-Droid)")
+                        Text("تحميل Termux من F-Droid")
                     }
                 }
             }
 
+            // Step 2: RUN_COMMAND Permission + allow-external-apps
             StepCard(
                 stepNumber = "2",
-                title = "Termux Bridge Permission",
+                title = "صلاحية الربط مع Termux",
                 ok = setup.permissionGranted && health.reachable,
-                subtitle = if (setup.permissionGranted) {
-                    "Permission granted. Paste this once in Termux to allow background auto-start:"
-                } else {
-                    "Allows Aether to wake your Ubuntu bridge automatically when opened."
-                }
+                subtitle = "تسمح لـ Aether يشغّل سيرفر Ubuntu تلقائياً أول ما تفتح التطبيق."
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (!setup.permissionGranted) {
@@ -174,104 +169,91 @@ fun SetupScreen(
                             onClick = onRequestPermission,
                             shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("Grant RUN_COMMAND")
+                            Text("منح صلاحية RUN_COMMAND")
                         }
                     }
+                    Text(
+                        text = "مرة واحدة فقط في Termux: الصق الأمر ده لتفعيل allow-external-apps=true (واسمح لـ Termux بالظهور فوق التطبيقات):",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     CommandBox(
                         command = BridgeScripts.ENABLE_EXTERNAL_APPS_CMD,
                         onCopy = {
                             copyToClipboard(context, BridgeScripts.ENABLE_EXTERNAL_APPS_CMD)
-                            onCopiedNotice("Command copied — paste it in Termux")
+                            onCopiedNotice("تم نسخ أمر التفعيل — الصقه في Termux")
                         }
                     )
                 }
             }
 
+            // Step 3: Ubuntu + Bridge Server
             StepCard(
                 stepNumber = "3",
-                title = "Ubuntu & Local Bridge",
+                title = "بيئة Ubuntu وسيرفر الربط",
                 ok = health.reachable,
                 subtitle = if (health.reachable) {
-                    val envLabel = if (health.ubuntuReady) "Ubuntu ready" else "Python ready"
+                    val envLabel = if (health.ubuntuReady) "Ubuntu جاهز" else "Python جاهز"
                     "$envLabel · Python ${health.pythonVersion} · Port ${state.settings.port}"
                 } else {
-                    "Tap Auto-Start, or copy the manual command and paste it in Termux:"
+                    "السيرفر المحلي مش شغال حالياً. اضغط تشغيل تلقائي عشان Aether يجهّز Ubuntu ويشغّله."
                 }
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { onAutoStartBridge(true) },
                         enabled = setup.termuxInstalled && !setup.checking,
-                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Auto-Setup & Start", maxLines = 1)
+                        Text("تجهيز وتشغيل تلقائي")
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    OutlinedButton(
+                        onClick = { onAutoStartBridge(false) },
+                        enabled = setup.termuxInstalled && !setup.checking,
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = { onAutoStartBridge(false) },
-                            enabled = setup.termuxInstalled && !setup.checking,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Open Termux", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                copyToClipboard(context, manualBridgeCmd)
-                                onCopiedNotice("Manual command copied — paste in Termux then tap Refresh")
-                            },
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Copy Manual", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                        Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("شاشة Termux")
                     }
                 }
             }
 
+            // Step 4: CLI Engine (Antigravity / Gemini / Claude)
             StepCard(
                 stepNumber = "4",
-                title = "AI CLI (${state.settings.cliEngine.binary.ifBlank { "CLI" }})",
+                title = "أداة الذكاء الاصطناعي (${state.settings.cliEngine.label})",
                 ok = health.reachable && cliReady,
                 subtitle = when {
-                    !health.reachable -> "Start the local bridge in Step 3 first."
-                    cliReady -> "${state.settings.cliEngine.binary} is installed and ready inside Ubuntu!"
-                    else -> "${state.settings.cliEngine.binary} is not installed yet. Tap below to install & sign in."
+                    !health.reachable -> "شغّل السيرفر في الخطوة 3 الأول عشان نفحص الـ CLI."
+                    cliReady -> "أداة ${state.settings.cliEngine.binary} مثبتة وجاهزة جوه Ubuntu!"
+                    else -> "أداة ${state.settings.cliEngine.binary} لسه مش مثبتة جوه Ubuntu. اضغط الزرار لتثبيتها وتسجيل الدخول بحسابك."
                 }
             ) {
                 if (health.reachable && !cliReady) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { onInstallCli(state.settings.cliEngine) },
-                            modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Icon(Icons.Rounded.Terminal, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
-                            Text("Install & Sign In (${state.settings.cliEngine.binary})", maxLines = 1)
+                            Text("تثبيت وتسجيل دخول ${state.settings.cliEngine.binary}")
                         }
                         CommandBox(
                             command = BridgeScripts.cliSetupCommand(state.settings.cliEngine),
                             onCopy = {
                                 copyToClipboard(context, BridgeScripts.cliSetupCommand(state.settings.cliEngine))
-                                onCopiedNotice("Install command copied")
+                                onCopiedNotice("تم نسخ أمر التثبيت")
                             }
                         )
                     }
                 }
             }
 
-            Spacer(Modifier.height(6.dp))
+            Spacer(Modifier.height(8.dp))
 
             Button(
                 onClick = onContinueToChat,
@@ -281,7 +263,7 @@ fun SetupScreen(
                 shape = RoundedCornerShape(14.dp),
                 enabled = health.reachable
             ) {
-                Text("Open Aether", style = MaterialTheme.typography.titleMedium)
+                Text("ابدأ الشغل في Aether", style = MaterialTheme.typography.titleMedium)
             }
 
             if (!health.reachable) {
@@ -289,7 +271,7 @@ fun SetupScreen(
                     onClick = onContinueToChat,
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 ) {
-                    Text("Skip for now")
+                    Text("تخطي مؤقتاً واستعراض الواجهة")
                 }
             }
         }
@@ -310,7 +292,7 @@ private fun StepCard(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
         border = BorderStroke(
             1.dp,
-            if (ok) Color(0xFF2E7D32).copy(alpha = 0.45f) else MaterialTheme.colorScheme.outline
+            if (ok) Color(0xFF2E7D32).copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline
         )
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -353,14 +335,13 @@ private fun CommandBox(command: String, onCopy: () -> Unit) {
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
+            maxLines = 2
         )
         Spacer(Modifier.width(8.dp))
         TextButton(onClick = onCopy) {
             Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(4.dp))
-            Text("Copy")
+            Text("نسخ")
         }
     }
 }

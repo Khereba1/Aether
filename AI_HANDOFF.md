@@ -28,7 +28,6 @@ You cannot compile: be careful and conservative. A mistake shows up only as a fa
 - `data/LocalStore.kt` — SharedPreferences settings and per-project JSON chat history persistence
 - `ui/Theme.kt` — Claude-inspired warm alabaster / warm charcoal Material 3 theme + Serif/Sans typography
 - `ui/SetupScreen.kt` — Step-by-step interactive onboarding wizard checking Termux, permissions, Ubuntu bridge, and CLI
-- `ui/MarkdownText.kt` — Pure Compose Markdown renderer (code blocks, bold, inline code, clean links, auto bidi)
 - `ui/ChatScreen.kt` — Claude-like chat UI, isolated projects sidebar, `GEMINI.md` rules editor, files viewer & ZIP export
 - `ui/SettingsScreen.kt` — Multi-CLI switcher, model override, port, theme/language settings, and `AppLog` viewer
 
